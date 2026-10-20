@@ -1,6 +1,8 @@
 package io.bromo.ingest;
 
 import io.bromo.shared.FieldError;
+import io.bromo.shared.contract.DataContract;
+import io.bromo.shared.contract.DataContract.FieldSpec;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -9,24 +11,28 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.regex.Pattern;
 import tools.jackson.databind.JsonNode;
 
-/** Checks one CloudEvent against the ingest rules in docs/API.md. */
+/**
+ * Checks one CloudEvent against the rules in the data contract.
+ *
+ * <p>CUSTOMIZE: the envelope rules and the typed fields come from config/data-contract.yml. Edit
+ * that file, not this class. To add a new kind of check, add a method here and call it from
+ * validate.
+ */
 public class EventValidator {
 
-  private static final Pattern TYPE = Pattern.compile("^[a-z0-9][a-z0-9._-]*\\.v[0-9]+$");
-  private static final Duration MAX_FUTURE = Duration.ofMinutes(5);
-  private static final int MAX_ID_LENGTH = 256;
-  private static final int MAX_SOURCE_LENGTH = 1024;
-
   private final Clock clock;
+  private final DataContract contract;
   private final Duration retention;
+  private final Duration futureTolerance;
 
-  /** Creates a validator with the clock and the retention window in days. */
-  public EventValidator(Clock clock, int retentionDays) {
+  /** Creates a validator from the clock and the data contract. */
+  public EventValidator(Clock clock, DataContract contract) {
     this.clock = clock;
-    this.retention = Duration.ofDays(retentionDays);
+    this.contract = contract;
+    this.retention = Duration.ofDays(contract.retentionDays().events());
+    this.futureTolerance = Duration.ofMinutes(contract.event().futureToleranceMinutes());
   }
 
   /** Returns the field errors of an event, empty when valid. The prefix is "" or "/index". */
@@ -37,12 +43,13 @@ public class EventValidator {
       return errors;
     }
     checkSpecVersion(event, prefix, errors);
-    checkText(event, "id", MAX_ID_LENGTH, prefix, errors);
-    checkText(event, "source", MAX_SOURCE_LENGTH, prefix, errors);
+    checkText(event, "id", contract.event().maxIdLength(), prefix, errors);
+    checkText(event, "source", contract.event().maxSourceLength(), prefix, errors);
     checkType(event, prefix, errors);
     checkTime(event, prefix, errors);
     checkDataContentType(event, prefix, errors);
     checkData(event, prefix, errors);
+    checkFields(event, prefix, errors);
     return errors;
   }
 
@@ -67,13 +74,14 @@ public class EventValidator {
   }
 
   /** Requires the type to match the naming pattern. */
-  private static void checkType(JsonNode event, String prefix, List<FieldError> errors) {
+  private void checkType(JsonNode event, String prefix, List<FieldError> errors) {
     JsonNode node = event.get("type");
-    if (node == null || !node.isString() || !TYPE.matcher(node.asString()).matches()) {
+    if (node == null
+        || !node.isString()
+        || !contract.event().typePattern().matcher(node.asString()).matches()) {
       errors.add(
           new FieldError(
-              prefix + "/type",
-              "must match " + TYPE.pattern() + ", for example com.example.payment.v1"));
+              prefix + "/type", "must match " + contract.event().typePattern().pattern()));
     }
   }
 
@@ -92,8 +100,11 @@ public class EventValidator {
       return;
     }
     Instant now = clock.instant();
-    if (time.isAfter(now.plus(MAX_FUTURE))) {
-      errors.add(new FieldError(prefix + "/time", "must not be more than 5 minutes in the future"));
+    if (time.isAfter(now.plus(futureTolerance))) {
+      errors.add(
+          new FieldError(
+              prefix + "/time",
+              "must not be more than " + futureTolerance.toMinutes() + " minutes in the future"));
     } else if (time.isBefore(now.minus(retention))) {
       errors.add(
           new FieldError(
@@ -121,6 +132,33 @@ public class EventValidator {
     JsonNode node = event.get("data");
     if (node != null && !node.isNull() && !node.isObject()) {
       errors.add(new FieldError(prefix + "/data", "must be a JSON object when present"));
+    }
+  }
+
+  /** Checks that promoted fields present in data have the declared type. */
+  private void checkFields(JsonNode event, String prefix, List<FieldError> errors) {
+    JsonNode data = event.get("data");
+    if (data == null || !data.isObject()) {
+      return;
+    }
+    for (FieldSpec field : contract.fields()) {
+      JsonNode value = data.get(field.path());
+      if (value == null || value.isNull()) {
+        continue;
+      }
+      boolean ok =
+          switch (field.type()) {
+            case STRING, LOW_CARDINALITY_STRING -> value.isString();
+            case FLOAT64 -> value.isNumber();
+            case INT64 -> value.isIntegralNumber();
+            case BOOL -> value.isBoolean();
+          };
+      if (!ok) {
+        errors.add(
+            new FieldError(
+                prefix + "/data/" + field.path(),
+                "must be of type " + field.type().name().toLowerCase(Locale.ROOT)));
+      }
     }
   }
 }

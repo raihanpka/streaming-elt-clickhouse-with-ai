@@ -6,6 +6,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import io.bromo.shared.ClickHouseClient;
+import io.bromo.shared.contract.DataContract;
+import io.bromo.testsupport.TestContract;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -14,14 +16,15 @@ import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-class RawEventWriterTest {
+class ClickHouseEventSinkTest {
 
   @Test
   void writesOneJsonLinePerEventWithAsyncInsertSettings() {
     ClickHouseClient client = mock(ClickHouseClient.class);
     JsonMapper mapper = JsonMapper.builder().build();
-    IngestProperties props = new IngestProperties(0, 0, 0, "ingest_writer", "pw", List.of());
-    RawEventWriter writer = new RawEventWriter(client, props, mapper);
+    IngestProperties props = new IngestProperties(0, 0, "ingest_writer", "pw", List.of());
+    DataContract contract = TestContract.load();
+    ClickHouseEventSink writer = new ClickHouseEventSink(client, props, contract, mapper);
     UUID id = UUID.randomUUID();
 
     writer.write(id, List.of("{\"id\":\"a\"}", "{\"id\":\"b\"}"));
@@ -31,7 +34,7 @@ class RawEventWriterTest {
     ArgumentCaptor<Map<String, String>> settings = ArgumentCaptor.forClass(Map.class);
     verify(client)
         .insertJsonEachRow(
-            eq("bromo.raw"),
+            eq(contract.database() + ".raw"),
             eq("request_id, payload"),
             lines.capture(),
             eq("ingest_writer"),

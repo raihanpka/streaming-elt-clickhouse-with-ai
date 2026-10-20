@@ -22,7 +22,7 @@ public class IngestService {
 
   private final CloudEventParser parser;
   private final EventValidator validator;
-  private final RawEventWriter writer;
+  private final EventSink sink;
   private final JsonMapper mapper;
   private final IngestProperties properties;
 
@@ -30,12 +30,12 @@ public class IngestService {
   public IngestService(
       CloudEventParser parser,
       EventValidator validator,
-      RawEventWriter writer,
+      EventSink sink,
       JsonMapper mapper,
       IngestProperties properties) {
     this.parser = parser;
     this.validator = validator;
-    this.writer = writer;
+    this.sink = sink;
     this.mapper = mapper;
     this.properties = properties;
   }
@@ -60,7 +60,7 @@ public class IngestService {
     if (!errors.isEmpty()) {
       throw ApiException.invalidEvent("The request contains invalid events.", errors);
     }
-    writer.write(UUID.randomUUID(), payloads);
+    sink.write(UUID.randomUUID(), payloads);
     return payloads.size();
   }
 

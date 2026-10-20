@@ -3,12 +3,14 @@ package io.bromo.ingest;
 import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-/** Limits, ClickHouse credentials, and accepted keys of the ingest module. */
+/**
+ * Operational limits, ClickHouse credentials, and accepted keys. Data rules live in the data
+ * contract.
+ */
 @ConfigurationProperties("bromo.ingest")
 public record IngestProperties(
     int maxEventBytes,
     int maxBatchEvents,
-    int retentionDays,
     String clickhouseUser,
     String clickhousePassword,
     List<String> apiKeys) {
@@ -17,7 +19,6 @@ public record IngestProperties(
   public IngestProperties {
     maxEventBytes = maxEventBytes <= 0 ? 65536 : maxEventBytes;
     maxBatchEvents = maxBatchEvents <= 0 ? 500 : maxBatchEvents;
-    retentionDays = retentionDays <= 0 ? 90 : retentionDays;
     clickhouseUser =
         clickhouseUser == null || clickhouseUser.isBlank() ? "ingest_writer" : clickhouseUser;
     clickhousePassword = clickhousePassword == null ? "" : clickhousePassword;

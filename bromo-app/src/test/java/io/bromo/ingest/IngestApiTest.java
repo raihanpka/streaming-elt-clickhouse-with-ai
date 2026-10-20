@@ -6,11 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.verify;
 
+import io.bromo.testsupport.TestEvents;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -25,7 +25,7 @@ class IngestApiTest {
   @Value("${local.server.port}")
   int port;
 
-  @MockitoBean RawEventWriter writer;
+  @MockitoBean EventSink sink;
 
   HttpResponse<String> post(String authorization, String body) throws Exception {
     HttpRequest.Builder request =
@@ -39,9 +39,7 @@ class IngestApiTest {
   }
 
   String event() {
-    return "{\"specversion\":\"1.0\",\"id\":\"e1\",\"source\":\"s\",\"type\":\"a.v1\",\"time\":\""
-        + Instant.now().minusSeconds(30)
-        + "\"}";
+    return TestEvents.recent("e1");
   }
 
   @Test
@@ -69,6 +67,6 @@ class IngestApiTest {
     HttpResponse<String> response = post("Bearer test-key", event());
     assertEquals(200, response.statusCode());
     assertTrue(response.body().contains("\"accepted\":1"));
-    verify(writer).write(any(), anyList());
+    verify(sink).write(any(), anyList());
   }
 }

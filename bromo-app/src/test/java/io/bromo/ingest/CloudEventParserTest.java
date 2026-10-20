@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.bromo.shared.ApiException;
+import io.bromo.shared.contract.DataContract;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,7 @@ import tools.jackson.databind.json.JsonMapper;
 class CloudEventParserTest {
 
   final JsonMapper mapper = JsonMapper.builder().build();
-  final CloudEventParser parser = new CloudEventParser(mapper, 3);
+  final CloudEventParser parser = new CloudEventParser(mapper, 3, null);
 
   static byte[] bytes(String s) {
     return s.getBytes(StandardCharsets.UTF_8);
@@ -118,5 +119,48 @@ class CloudEventParserTest {
             ApiException.class, () -> parser.parse("text/plain", new HttpHeaders(), bytes("x")));
     assertEquals(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ex.status());
     assertThrows(ApiException.class, () -> parser.parse(null, new HttpHeaders(), bytes("x")));
+  }
+
+  @Test
+  void plainJsonIsMappedWithTheContractBindings() {
+    DataContract.PlainJsonIntake intake =
+        new DataContract.PlainJsonIntake(
+            new DataContract.Binding("/orderId", null),
+            new DataContract.Binding("/createdAt", null),
+            new DataContract.Binding(null, "shop-backend"),
+            new DataContract.Binding(null, "com.shop.order.v1"),
+            new DataContract.Binding("/customer/id", null));
+    CloudEventParser plain = new CloudEventParser(mapper, 3, intake);
+    JsonNode event =
+        plain
+            .parse(
+                "application/json",
+                new HttpHeaders(),
+                bytes(
+                    "{\"orderId\":1234,\"createdAt\":\"2026-10-20T09:59:00Z\",\"customer\":{\"id\":\"c9\"},\"total\":5}"))
+            .get(0);
+    assertEquals("1234", event.get("id").asString());
+    assertEquals("shop-backend", event.get("source").asString());
+    assertEquals("com.shop.order.v1", event.get("type").asString());
+    assertEquals("c9", event.get("subject").asString());
+    assertEquals("2026-10-20T09:59:00Z", event.get("time").asString());
+    assertEquals(5, event.get("data").get("total").asInt());
+    assertEquals("1.0", event.get("specversion").asString());
+  }
+
+  @Test
+  void plainJsonWithAMissingPointerLeavesTheAttributeOutForTheValidator() {
+    DataContract.PlainJsonIntake intake =
+        new DataContract.PlainJsonIntake(
+            new DataContract.Binding("/orderId", null),
+            new DataContract.Binding("/createdAt", null),
+            new DataContract.Binding(null, "s"),
+            new DataContract.Binding(null, "a.v1"),
+            null);
+    JsonNode event =
+        new CloudEventParser(mapper, 3, intake)
+            .parse("application/json", new HttpHeaders(), bytes("{\"createdAt\":\"t\"}"))
+            .get(0);
+    assertEquals(false, event.has("id"));
   }
 }

@@ -1,5 +1,7 @@
 package io.bromo.ingest;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doThrow;
@@ -14,6 +16,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import io.bromo.shared.ApiException;
 import io.bromo.shared.ProblemDetailsHandler;
+import io.bromo.shared.contract.DataContract;
+import io.bromo.testsupport.TestContract;
+import io.bromo.testsupport.TestEvents;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -22,43 +27,56 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
+/** Controller tests use events built from the data contract sample. */
 class IngestControllerTest {
 
-  static final String EVENT =
-      "{\"specversion\":\"1.0\",\"id\":\"e1\",\"source\":\"s\",\"type\":\"com.example.payment.v1\","
-          + "\"time\":\"2026-10-20T09:59:00Z\",\"data\":{\"amount\":42.5}}";
+  static final Instant NOW = Instant.parse("2026-10-20T10:00:00Z");
 
-  RawEventWriter writer = mock(RawEventWriter.class);
+  final DataContract contract = TestContract.load();
+  final EventSink sink = mock(EventSink.class);
   MockMvc mvc;
+
+  String event(String id) {
+    return TestEvents.tree(contract, id, NOW.minusSeconds(60)).toString();
+  }
 
   @BeforeEach
   void setUp() {
     JsonMapper mapper = JsonMapper.builder().build();
-    IngestProperties props = new IngestProperties(400, 2, 90, "ingest_writer", "pw", List.of("k"));
-    Clock clock = Clock.fixed(Instant.parse("2026-10-20T10:00:00Z"), ZoneOffset.UTC);
+    IngestProperties props = new IngestProperties(2000, 2, "ingest_writer", "pw", List.of("k"));
+    Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     IngestService service =
         new IngestService(
-            new CloudEventParser(mapper, 2), new EventValidator(clock, 90), writer, mapper, props);
+            new CloudEventParser(mapper, 2, contract.plainJson()),
+            new EventValidator(clock, contract),
+            sink,
+            mapper,
+            props);
     mvc =
         MockMvcBuilders.standaloneSetup(new IngestController(service))
             .setControllerAdvice(new ProblemDetailsHandler())
             .build();
   }
 
+  MockHttpServletRequestBuilder structured(String body) {
+    return post("/api/v1/events").contentType("application/cloudevents+json").content(body);
+  }
+
   @Test
   void structuredEventIsStoredAndCounted() throws Exception {
-    mvc.perform(post("/api/v1/events").contentType("application/cloudevents+json").content(EVENT))
+    mvc.perform(structured(event("e1")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.accepted").value(1));
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<String>> payloads = ArgumentCaptor.forClass(List.class);
-    verify(writer).write(any(), payloads.capture());
-    org.junit.jupiter.api.Assertions.assertEquals(1, payloads.getValue().size());
-    org.junit.jupiter.api.Assertions.assertTrue(
-        payloads.getValue().get(0).contains("\"id\":\"e1\""));
+    verify(sink).write(any(), payloads.capture());
+    assertEquals(1, payloads.getValue().size());
+    assertTrue(payloads.getValue().get(0).contains("\"id\":\"e1\""));
   }
 
   @Test
@@ -66,37 +84,36 @@ class IngestControllerTest {
     mvc.perform(
             post("/api/v1/events")
                 .contentType("application/cloudevents-batch+json")
-                .content("[" + EVENT + "," + EVENT.replace("e1", "e2") + "]"))
+                .content("[" + event("e1") + "," + event("e2") + "]"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.accepted").value(2));
+    verify(sink).write(any(), anyList());
   }
 
   @Test
   void binaryModeIsStored() throws Exception {
+    ObjectNode tree = TestEvents.tree(contract, "b1", NOW.minusSeconds(60));
     mvc.perform(
             post("/api/v1/events")
                 .contentType("application/json")
                 .header("ce-specversion", "1.0")
                 .header("ce-id", "b1")
-                .header("ce-source", "s")
-                .header("ce-type", "a.v1")
-                .header("ce-time", "2026-10-20T09:59:00Z")
-                .content("{\"amount\":1}"))
+                .header("ce-source", tree.get("source").asString())
+                .header("ce-type", tree.get("type").asString())
+                .header("ce-time", tree.get("time").asString())
+                .content(tree.get("data").toString()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.accepted").value(1));
   }
 
   @Test
   void invalidEventReturnsPointersAndStoresNothing() throws Exception {
-    mvc.perform(
-            post("/api/v1/events")
-                .contentType("application/cloudevents+json")
-                .content("{\"specversion\":\"1.0\"}"))
+    mvc.perform(structured("{\"specversion\":\"1.0\"}"))
         .andExpect(status().isBadRequest())
         .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
         .andExpect(jsonPath("$.type").value("urn:bromo:problem:invalid-event"))
         .andExpect(jsonPath("$.errors[0].pointer").value("/id"));
-    verify(writer, never()).write(any(), anyList());
+    verify(sink, never()).write(any(), anyList());
   }
 
   @Test
@@ -104,15 +121,15 @@ class IngestControllerTest {
     mvc.perform(
             post("/api/v1/events")
                 .contentType("application/cloudevents-batch+json")
-                .content("[" + EVENT + ",{\"specversion\":\"1.0\"}]"))
+                .content("[" + event("e1") + ",{\"specversion\":\"1.0\"}]"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.errors[0].pointer").value("/1/id"));
-    verify(writer, never()).write(any(), anyList());
+    verify(sink, never()).write(any(), anyList());
   }
 
   @Test
   void malformedJsonIsBadRequest() throws Exception {
-    mvc.perform(post("/api/v1/events").contentType("application/cloudevents+json").content("{oops"))
+    mvc.perform(structured("{oops"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.type").value("urn:bromo:problem:invalid-request"));
   }
@@ -125,9 +142,9 @@ class IngestControllerTest {
 
   @Test
   void oversizeEventIsTooLarge() throws Exception {
-    String big = EVENT.replace("42.5", "\"" + "x".repeat(500) + "\"");
-    mvc.perform(post("/api/v1/events").contentType("application/cloudevents+json").content(big))
-        .andExpect(status().isContentTooLarge());
+    ObjectNode big = TestEvents.tree(contract, "big", NOW.minusSeconds(60));
+    ((ObjectNode) big.get("data")).put("padding", "x".repeat(3000));
+    mvc.perform(structured(big.toString())).andExpect(status().isContentTooLarge());
   }
 
   @Test
@@ -135,16 +152,16 @@ class IngestControllerTest {
     mvc.perform(
             post("/api/v1/events")
                 .contentType("application/cloudevents-batch+json")
-                .content("[" + EVENT + "," + EVENT + "," + EVENT + "]"))
+                .content("[" + event("a") + "," + event("b") + "," + event("c") + "]"))
         .andExpect(status().isContentTooLarge());
   }
 
   @Test
-  void clickhouseDownIsServiceUnavailableWithRetryAfter() throws Exception {
+  void sinkOutageIsServiceUnavailableWithRetryAfter() throws Exception {
     doThrow(ApiException.unavailable("ClickHouse is unavailable.", 5))
-        .when(writer)
+        .when(sink)
         .write(any(), anyList());
-    mvc.perform(post("/api/v1/events").contentType("application/cloudevents+json").content(EVENT))
+    mvc.perform(structured(event("e1")))
         .andExpect(status().isServiceUnavailable())
         .andExpect(header().string("Retry-After", "5"));
   }

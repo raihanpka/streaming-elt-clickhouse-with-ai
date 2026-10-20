@@ -4,119 +4,162 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.bromo.shared.FieldError;
+import io.bromo.shared.contract.DataContract;
+import io.bromo.shared.contract.DataContract.FieldSpec;
+import io.bromo.shared.contract.DataContractLoader;
+import io.bromo.testsupport.TestContract;
+import io.bromo.testsupport.TestEvents;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
+/** Validator tests build their events from the contract sample, so they follow the user's data. */
 class EventValidatorTest {
 
   static final Instant NOW = Instant.parse("2026-10-20T10:00:00Z");
   final JsonMapper mapper = JsonMapper.builder().build();
-  final EventValidator validator = new EventValidator(Clock.fixed(NOW, ZoneOffset.UTC), 90);
+  final DataContract contract = TestContract.load();
+  final EventValidator validator = new EventValidator(Clock.fixed(NOW, ZoneOffset.UTC), contract);
 
-  JsonNode json(String text) {
-    return mapper.readTree(text);
+  ObjectNode valid() {
+    return TestEvents.tree(contract, "e1", NOW.minusSeconds(60));
   }
 
-  List<FieldError> validate(String text) {
-    return validator.validate(json(text), "");
+  List<FieldError> validate(JsonNode event) {
+    return validator.validate(event, "");
   }
 
-  static final String VALID =
-      "{\"specversion\":\"1.0\",\"id\":\"e1\",\"source\":\"s\",\"type\":\"com.example.payment.v1\","
-          + "\"time\":\"2026-10-20T09:59:00Z\",\"data\":{\"amount\":1}}";
+  String firstPointer(JsonNode event) {
+    return validate(event).get(0).pointer();
+  }
 
   @Test
   void validEventHasNoErrors() {
-    assertTrue(validate(VALID).isEmpty());
+    assertTrue(validate(valid()).isEmpty());
   }
 
   @Test
-  void minimalEventWithoutDataIsValid() {
-    assertTrue(
-        validate(
-                "{\"specversion\":\"1.0\",\"id\":\"e\",\"source\":\"s\",\"type\":\"a.v1\",\"time\":\"2026-10-20T09:59:00Z\"}")
-            .isEmpty());
+  void eventWithoutDataIsValid() {
+    ObjectNode event = valid();
+    event.remove("data");
+    assertTrue(validate(event).isEmpty());
   }
 
   @Test
   void nonObjectIsRejected() {
-    assertEquals("", validator.validate(json("[1]"), "").get(0).pointer());
+    assertEquals("", validator.validate(mapper.readTree("[1]"), "").get(0).pointer());
   }
 
   @Test
   void missingAttributesAreReportedWithPointers() {
-    List<String> pointers = validate("{}").stream().map(FieldError::pointer).toList();
+    List<String> pointers =
+        validate(mapper.createObjectNode()).stream().map(FieldError::pointer).toList();
     assertEquals(List.of("/specversion", "/id", "/source", "/type", "/time"), pointers);
   }
 
   @Test
   void specversionMustBeOnePointZero() {
-    assertEquals("/specversion", validate(VALID.replace("\"1.0\"", "\"0.3\"")).get(0).pointer());
+    assertEquals("/specversion", firstPointer(valid().put("specversion", "0.3")));
   }
 
   @Test
-  void idAndSourceHaveLengthLimits() {
-    String longId = "x".repeat(257);
-    assertEquals("/id", validate(VALID.replace("\"e1\"", "\"" + longId + "\"")).get(0).pointer());
-    String longSource = "x".repeat(1025);
+  void idAndSourceFollowTheContractLengthLimits() {
+    assertEquals(
+        "/id", firstPointer(valid().put("id", "x".repeat(contract.event().maxIdLength() + 1))));
     assertEquals(
         "/source",
-        validate(VALID.replace("\"source\":\"s\"", "\"source\":\"" + longSource + "\""))
-            .get(0)
-            .pointer());
+        firstPointer(valid().put("source", "x".repeat(contract.event().maxSourceLength() + 1))));
   }
 
   @Test
-  void typeMustMatchTheNamingPattern() {
-    assertEquals(
-        "/type", validate(VALID.replace("com.example.payment.v1", "Payment")).get(0).pointer());
-    assertEquals(
-        "/type", validate(VALID.replace("com.example.payment.v1", "payment")).get(0).pointer());
+  void emptyTypeIsRejected() {
+    assertEquals("/type", firstPointer(valid().put("type", "")));
   }
 
   @Test
   void timeMustBeRfc3339() {
-    assertEquals(
-        "/time", validate(VALID.replace("2026-10-20T09:59:00Z", "yesterday")).get(0).pointer());
+    assertEquals("/time", firstPointer(valid().put("time", "yesterday")));
   }
 
   @Test
-  void timeCannotBeMoreThanFiveMinutesAhead() {
+  void timeFollowsTheFutureToleranceInTheContract() {
+    Duration tolerance = Duration.ofMinutes(contract.event().futureToleranceMinutes());
     assertEquals(
-        "/time",
-        validate(VALID.replace("2026-10-20T09:59:00Z", "2026-10-20T10:06:00Z")).get(0).pointer());
-    assertTrue(validate(VALID.replace("2026-10-20T09:59:00Z", "2026-10-20T10:04:00Z")).isEmpty());
+        "/time", firstPointer(valid().put("time", NOW.plus(tolerance).plusSeconds(60).toString())));
+    assertTrue(
+        validate(valid().put("time", NOW.plus(tolerance).minusSeconds(60).toString())).isEmpty());
   }
 
   @Test
-  void timeCannotBeOlderThanRetention() {
+  void timeFollowsTheEventsRetentionInTheContract() {
+    Duration retention = Duration.ofDays(contract.retentionDays().events());
     assertEquals(
         "/time",
-        validate(VALID.replace("2026-10-20T09:59:00Z", "2026-07-01T00:00:00Z")).get(0).pointer());
-    assertTrue(validate(VALID.replace("2026-10-20T09:59:00Z", "2026-08-01T00:00:00Z")).isEmpty());
+        firstPointer(valid().put("time", NOW.minus(retention).minusSeconds(3600).toString())));
+    assertTrue(
+        validate(valid().put("time", NOW.minus(retention).plusSeconds(3600).toString())).isEmpty());
   }
 
   @Test
   void dataMustBeAnObject() {
-    assertEquals("/data", validate(VALID.replace("{\"amount\":1}", "5")).get(0).pointer());
+    ObjectNode event = valid();
+    event.put("data", 5);
+    assertEquals("/data", firstPointer(event));
   }
 
   @Test
   void datacontenttypeMustBeJson() {
-    String xml = VALID.replace("\"data\"", "\"datacontenttype\":\"text/xml\",\"data\"");
-    assertEquals("/datacontenttype", validate(xml).get(0).pointer());
-    String json = VALID.replace("\"data\"", "\"datacontenttype\":\"application/json\",\"data\"");
-    assertTrue(validate(json).isEmpty());
+    assertEquals("/datacontenttype", firstPointer(valid().put("datacontenttype", "text/xml")));
+    assertTrue(validate(valid().put("datacontenttype", "application/json")).isEmpty());
+  }
+
+  @Test
+  void everyPromotedFieldMustHaveItsDeclaredType() {
+    for (FieldSpec field : contract.fields()) {
+      ObjectNode event = valid();
+      ObjectNode data = (ObjectNode) event.get("data");
+      if (field.type().textual()) {
+        data.put(field.path(), 5);
+      } else {
+        data.put(field.path(), "not-a-value");
+      }
+      assertEquals("/data/" + field.path(), firstPointer(event), field.name());
+    }
+  }
+
+  @Test
+  void nullPromotedFieldsAreAllowed() {
+    for (FieldSpec field : contract.fields()) {
+      ObjectNode event = valid();
+      ((ObjectNode) event.get("data")).putNull(field.path());
+      assertTrue(validate(event).isEmpty(), field.name());
+    }
+  }
+
+  @Test
+  void typePatternComesFromTheContract() {
+    DataContract strict =
+        DataContractLoader.parse(
+            TestContract.yaml()
+                .replace(
+                    "typePattern: '^[a-z0-9][a-z0-9._-]*\\.v[0-9]+$'",
+                    "typePattern: '^only\\.this\\.v1$'")
+                .replace("type: " + contract.sample().type(), "type: only.this.v1"));
+    EventValidator v = new EventValidator(Clock.fixed(NOW, ZoneOffset.UTC), strict);
+    assertEquals("/type", v.validate(valid(), "").get(0).pointer());
+    assertTrue(v.validate(valid().put("type", "only.this.v1"), "").isEmpty());
   }
 
   @Test
   void pointerPrefixIsUsedForBatchItems() {
     assertEquals(
-        "/3/id", validator.validate(json("{\"specversion\":\"1.0\"}"), "/3").get(0).pointer());
+        "/3/id",
+        validator.validate(mapper.readTree("{\"specversion\":\"1.0\"}"), "/3").get(0).pointer());
   }
 }

@@ -1,34 +1,42 @@
 package io.bromo.ingest;
 
 import io.bromo.shared.ClickHouseClient;
+import io.bromo.shared.contract.DataContract;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
-/** Writes event payloads to the bronze table with asynchronous inserts that wait for the flush. */
-@Component
-public class RawEventWriter {
+/**
+ * Default sink: writes payloads to the bronze table with asynchronous inserts that wait for the
+ * flush.
+ */
+public class ClickHouseEventSink implements EventSink {
 
-  private static final String TABLE = "bromo.raw";
   private static final String COLUMNS = "request_id, payload";
   private static final Map<String, String> SETTINGS = settings();
 
   private final ClickHouseClient client;
   private final IngestProperties properties;
   private final JsonMapper mapper;
+  private final String table;
 
-  /** Creates a writer using the ingest_writer ClickHouse user. */
-  public RawEventWriter(ClickHouseClient client, IngestProperties properties, JsonMapper mapper) {
+  /** Creates a sink using the ingest_writer ClickHouse user and the database from the contract. */
+  public ClickHouseEventSink(
+      ClickHouseClient client,
+      IngestProperties properties,
+      DataContract contract,
+      JsonMapper mapper) {
     this.client = client;
     this.properties = properties;
     this.mapper = mapper;
+    this.table = contract.database() + ".raw";
   }
 
   /** Stores one raw row per payload, all under one request id. */
+  @Override
   public void write(UUID requestId, List<String> payloads) {
     StringBuilder lines = new StringBuilder();
     for (String payload : payloads) {
@@ -38,7 +46,7 @@ public class RawEventWriter {
       lines.append(mapper.writeValueAsString(row)).append('\n');
     }
     client.insertJsonEachRow(
-        TABLE,
+        table,
         COLUMNS,
         lines.toString(),
         properties.clickhouseUser(),
