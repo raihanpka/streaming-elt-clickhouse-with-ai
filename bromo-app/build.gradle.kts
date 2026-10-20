@@ -20,3 +20,16 @@ dependencies {
 springBoot {
     buildInfo()
 }
+
+// Regenerates infra/clickhouse init scripts from config/data-contract.yml.
+tasks.register<JavaExec>("generateWarehouseSql") {
+    group = "bromo"
+    description = "Generates the ClickHouse init scripts from config/data-contract.yml"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("io.bromo.shared.contract.WarehouseSqlMain")
+    workingDir = rootProject.projectDir
+    args(
+        providers.gradleProperty("contractFile").orElse("config/data-contract.yml").get(),
+        providers.gradleProperty("outputDir").orElse("infra/clickhouse").get(),
+    )
+}
