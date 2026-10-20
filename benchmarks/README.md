@@ -57,6 +57,30 @@ Command: `./gradlew :bromo-app:test --tests '*IngestLatencyTest*'`. The report i
 `bromo-app/build/reports/ingest-latency.txt`. These numbers come from one run on a laptop, not from the VPS, and are
 sequential single client measurements. Treat them as a baseline, not as a capacity claim.
 
+### Replay of 100k events and layer rebuild (milestone M1, Checkpoint 1)
+
+| Item | Value |
+|---|---|
+| Machine | Apple M3, 8 cores, 16 GB RAM, OrbStack Docker VM, ClickHouse `26.3.56.2`, app started with `./gradlew :bromo-app:bootRun` |
+| Data | 100,000 **synthetic** rows with the columns of the ULB fraud dataset (random values, not the real dataset), made by `tools/replayer/scripts/make_sample_csv.py` |
+| Replay | 100,000 events in 500 batches of 200, `--speed 2000`, finished in 37 s wall time. The run is paced by the dataset timeline, so this is not a maximum throughput. |
+| Reconciliation after the replay | bronze valid versus silver 100,000 to 100,000, rejected 0 to 0, silver versus gold 100,000 to 100,000, all consistent |
+| Rebuild of silver and gold from bronze | 0.31 s for 100,000 rows, totals and reconciliation identical afterwards |
+| ClickHouse memory after the load | about 700 MiB of the 2 GiB limit (includes caches), a single run |
+
+Commands:
+
+```bash
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
+set -a; . ./.env; set +a; ./gradlew :bromo-app:bootRun &
+cd tools/replayer
+.venv/bin/python scripts/make_sample_csv.py --rows 100000 --out data/synthetic-ulb-like.csv
+.venv/bin/replay --mapping datasets/ulb-fraud.yml --file data/synthetic-ulb-like.csv --limit 100000 --speed 2000
+cd ../.. && infra/clickhouse/maintenance/run.sh count card-replay
+infra/clickhouse/maintenance/run.sh reconcile
+infra/clickhouse/maintenance/run.sh reprocess
+```
+
 ## Layout
 
 ```
