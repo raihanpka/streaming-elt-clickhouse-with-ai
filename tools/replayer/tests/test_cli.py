@@ -91,3 +91,70 @@ def test_rows_are_streamed_not_loaded_up_front(tmp_path, monkeypatch):
         code, summary = replay(server, "--batch-size", "10", tmp_path=tmp_path)
     assert code == 0 and summary["sent"] == 1000 and summary["planned"] == 1000
     assert consumed["at_first_request"] < 100
+
+
+def test_a_clickhouse_source_is_queried_and_replayed(tmp_path):
+    from .fake_clickhouse import FakeClickHouse
+
+    body = "event_time,a,b\n1000,1,x\n1001,2,y\n1002,\\N,z\n"
+    summary = tmp_path / "summary.json"
+    with FakeClickHouse(body) as ch, FakeIngest() as ingest:
+        code = run(
+            [
+                "--mapping",
+                str(FIXTURES / "clickhouse-mapping.yml"),
+                "--source-url",
+                ch.url,
+                "--source-user",
+                "admin",
+                "--source-password",
+                "pw",
+                "--param",
+                "year=2021",
+                "--since",
+                "2020-02-01",
+                "--limit",
+                "3",
+                "--url",
+                ingest.url,
+                "--api-key",
+                "k",
+                "--speed",
+                "100000",
+                "--summary",
+                str(summary),
+            ],
+            sleep=lambda s: None,
+        )
+    assert code == 0
+    assert json.loads(summary.read_text())["sent"] == 3
+    assert "y = 2021" in ch.queries[0] and "toDate('2020-02-01')" in ch.queries[0] and "LIMIT 3" in ch.queries[0]
+    assert ch.headers[0] == {"user": "admin", "key": "pw"}
+    events = ingest.events()
+    assert [e["id"] for e in events] == ["q-1", "q-2", "q-3"]
+    assert "a" not in events[2]["data"]
+
+
+def test_a_failing_query_source_exits_with_an_error_not_a_traceback(tmp_path):
+    from .fake_clickhouse import FakeClickHouse
+
+    summary = tmp_path / "summary.json"
+    with FakeClickHouse("Code: 60. unknown table", status=500) as ch, FakeIngest() as ingest:
+        code = run(
+            [
+                "--mapping",
+                str(FIXTURES / "clickhouse-mapping.yml"),
+                "--source-url",
+                ch.url,
+                "--url",
+                ingest.url,
+                "--api-key",
+                "k",
+                "--summary",
+                str(summary),
+            ],
+            sleep=lambda s: None,
+        )
+    assert code == 1
+    assert json.loads(summary.read_text())["sent"] == 0
+    assert ingest.requests == []
