@@ -1,6 +1,6 @@
 -- GENERATED from config/data-contract.yml by ./gradlew :bromo-app:generateWarehouseSql. Do not edit.
 -- Silver layer: parsed and validated events, plus rejected rows with a reason.
-CREATE TABLE IF NOT EXISTS bromo.events
+CREATE TABLE IF NOT EXISTS silver.events
 (
     `event_id` String COMMENT 'CloudEvents id, unique per source',
     `source` LowCardinality(String) COMMENT 'CloudEvents source: the system that produced the event',
@@ -18,12 +18,12 @@ ORDER BY (type, source, toStartOfMinute(time), event_id)
 TTL toDateTime(time) + INTERVAL 90 DAY
 COMMENT 'Silver: validated events. Duplicates with the same key collapse on merge, keeping the latest ingested row.';
 
-CREATE TABLE IF NOT EXISTS bromo.events_rejected
+CREATE TABLE IF NOT EXISTS silver.events_rejected
 (
-    `request_id` UUID COMMENT 'Id of the ingest request that stored the raw row',
+    `request_id` UUID COMMENT 'Id of the ingest request that stored the bronze row',
     `reason` LowCardinality(String) COMMENT 'Why the row was rejected: invalid_json, missing_id, missing_source, missing_type, bad_time',
-    `payload` String COMMENT 'The raw payload that was rejected',
-    `ingested_at` DateTime64(3, 'UTC') COMMENT 'When the raw row was stored, UTC'
+    `payload` String COMMENT 'The payload that was rejected',
+    `ingested_at` DateTime64(3, 'UTC') COMMENT 'When the bronze row was stored, UTC'
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ingested_at)
@@ -31,7 +31,7 @@ ORDER BY (ingested_at, request_id)
 TTL toDateTime(ingested_at) + INTERVAL 30 DAY
 COMMENT 'Silver: raw rows that failed validation, with a reason. Nothing is dropped silently.';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS bromo.events_mv TO bromo.events
+CREATE MATERIALIZED VIEW IF NOT EXISTS silver.events_mv TO silver.events
 DEFINER = admin SQL SECURITY DEFINER
 COMMENT 'Silver: parses valid raw rows into events'
 AS SELECT
@@ -44,14 +44,14 @@ AS SELECT
     JSONExtract(payload, 'data', 'amount', 'Nullable(Float64)') AS amount,
     JSONExtractString(payload, 'data', 'label') AS label,
     mapFilter((k, v) -> k NOT IN ('amount', 'label'), JSONExtract(payload, 'data', 'Map(String, String)')) AS attrs
-FROM bromo.raw
+FROM bronze.events
 WHERE isValidJSON(payload)
   AND JSONExtractString(payload, 'id') != ''
   AND JSONExtractString(payload, 'source') != ''
   AND JSONExtractString(payload, 'type') != ''
   AND parseDateTime64BestEffortOrNull(JSONExtractString(payload, 'time'), 3, 'UTC') IS NOT NULL;
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS bromo.events_rejected_mv TO bromo.events_rejected
+CREATE MATERIALIZED VIEW IF NOT EXISTS silver.events_rejected_mv TO silver.events_rejected
 DEFINER = admin SQL SECURITY DEFINER
 COMMENT 'Silver: routes invalid raw rows to events_rejected with a reason'
 AS SELECT
@@ -64,7 +64,7 @@ AS SELECT
         'bad_time') AS reason,
     payload,
     ingested_at
-FROM bromo.raw
+FROM bronze.events
 WHERE NOT (isValidJSON(payload)
   AND JSONExtractString(payload, 'id') != ''
   AND JSONExtractString(payload, 'source') != ''

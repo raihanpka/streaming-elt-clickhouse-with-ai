@@ -27,16 +27,16 @@ public final class WarehouseSqlGenerator {
   public static Map<String, String> generate(DataContract c) {
     Map<String, String> files = new LinkedHashMap<>();
     files.put("001_users.sh", users(c));
-    files.put("002_raw.sql", raw(c));
-    files.put("003_events.sql", events(c));
-    files.put("004_marts.sql", marts(c));
+    files.put("002_bronze.sql", bronze(c));
+    files.put("003_silver.sql", silver(c));
+    files.put("004_gold.sql", gold(c));
     files.put("tests/contract-examples.sh", examples(c));
     return files;
   }
 
-  /** The shell script that creates the database, users, and grants. */
+  /** The shell script that creates the layer databases, users, and grants. */
   private static String users(DataContract c) {
-    String db = c.database();
+    DataContract.Layers l = c.layers();
     return String.join(
         "\n",
         "#!/bin/bash",
@@ -48,25 +48,31 @@ public final class WarehouseSqlGenerator {
         "",
         "clickhouse-client --user \"$CLICKHOUSE_USER\" --password \"$CLICKHOUSE_PASSWORD\" --multiquery <<SQL",
         "CREATE DATABASE IF NOT EXISTS "
-            + db
-            + " COMMENT 'Bromo streaming ELT warehouse: raw, events, marts, findings';",
+            + l.bronze()
+            + " COMMENT 'Bronze layer: events exactly as received';",
+        "CREATE DATABASE IF NOT EXISTS "
+            + l.silver()
+            + " COMMENT 'Silver layer: parsed, typed, and validated events';",
+        "CREATE DATABASE IF NOT EXISTS "
+            + l.gold()
+            + " COMMENT 'Gold layer: per minute rollups read by the API, the detector, and the UI';",
         "",
         "CREATE USER IF NOT EXISTS ingest_writer IDENTIFIED WITH sha256_password BY '${CLICKHOUSE_INGEST_PASSWORD}';",
         "CREATE USER IF NOT EXISTS api_reader IDENTIFIED WITH sha256_password BY '${CLICKHOUSE_API_PASSWORD}';",
         "",
-        "GRANT INSERT ON " + db + ".raw TO ingest_writer;",
-        "GRANT SELECT ON " + db + ".mart_* TO api_reader;",
+        "GRANT INSERT ON " + c.bronzeTable() + " TO ingest_writer;",
+        "GRANT SELECT ON " + l.gold() + ".* TO api_reader;",
         "SQL",
         "");
   }
 
   /** The bronze table. */
-  private static String raw(DataContract c) {
+  private static String bronze(DataContract c) {
     return String.join(
         "\n",
         "-- " + HEADER,
         "-- Bronze layer: exactly what the ingest API stored, one row per event.",
-        "CREATE TABLE IF NOT EXISTS " + c.database() + ".raw",
+        "CREATE TABLE IF NOT EXISTS " + c.bronzeTable(),
         "(",
         "    `request_id` UUID COMMENT 'Id of the ingest request that stored this row, also present in logs',",
         "    `payload` String COMMENT 'The event JSON exactly as received, unmodified',",
@@ -75,14 +81,13 @@ public final class WarehouseSqlGenerator {
         "ENGINE = MergeTree",
         "PARTITION BY toYYYYMM(ingested_at)",
         "ORDER BY (ingested_at, request_id)",
-        "TTL toDateTime(ingested_at) + INTERVAL " + c.retentionDays().raw() + " DAY",
-        "COMMENT 'Bronze: raw events as stored by the ingest API. Read only by the silver views and by reprocessing.';",
+        "TTL toDateTime(ingested_at) + INTERVAL " + c.retentionDays().bronze() + " DAY",
+        "COMMENT 'Bronze: events exactly as the ingest API stored them. Read only by the silver views and by reprocessing.';",
         "");
   }
 
-  /** The silver tables and the two views that fill them from raw. */
-  private static String events(DataContract c) {
-    String db = c.database();
+  /** The silver tables and the two views that fill them from bronze. */
+  private static String silver(DataContract c) {
     List<String> columns = new ArrayList<>();
     columns.add(column("event_id", "String", "CloudEvents id, unique per source"));
     columns.add(
@@ -146,46 +151,45 @@ public final class WarehouseSqlGenerator {
         "\n",
         "-- " + HEADER,
         "-- Silver layer: parsed and validated events, plus rejected rows with a reason.",
-        "CREATE TABLE IF NOT EXISTS " + db + ".events",
+        "CREATE TABLE IF NOT EXISTS " + c.silverTable(),
         "(",
         String.join(",\n", columns),
         ")",
         "ENGINE = ReplacingMergeTree(ingested_at)",
         "PARTITION BY toYYYYMM(time)",
         "ORDER BY (type, source, toStartOfMinute(time), event_id)",
-        "TTL toDateTime(time) + INTERVAL " + c.retentionDays().events() + " DAY",
+        "TTL toDateTime(time) + INTERVAL " + c.retentionDays().silver() + " DAY",
         "COMMENT 'Silver: validated events. Duplicates with the same key collapse on merge, keeping the latest ingested row.';",
         "",
-        "CREATE TABLE IF NOT EXISTS " + db + ".events_rejected",
+        "CREATE TABLE IF NOT EXISTS " + c.silverRejectedTable(),
         "(",
-        column("request_id", "UUID", "Id of the ingest request that stored the raw row") + ",",
+        column("request_id", "UUID", "Id of the ingest request that stored the bronze row") + ",",
         column(
                 "reason",
                 "LowCardinality(String)",
                 "Why the row was rejected: invalid_json, missing_id, missing_source, missing_type, bad_time")
             + ",",
-        column("payload", "String", "The raw payload that was rejected") + ",",
-        column("ingested_at", "DateTime64(3, 'UTC')", "When the raw row was stored, UTC"),
+        column("payload", "String", "The payload that was rejected") + ",",
+        column("ingested_at", "DateTime64(3, 'UTC')", "When the bronze row was stored, UTC"),
         ")",
         "ENGINE = MergeTree",
         "PARTITION BY toYYYYMM(ingested_at)",
         "ORDER BY (ingested_at, request_id)",
-        "TTL toDateTime(ingested_at) + INTERVAL " + c.retentionDays().rejected() + " DAY",
+        "TTL toDateTime(ingested_at) + INTERVAL " + c.retentionDays().silverRejected() + " DAY",
         "COMMENT 'Silver: raw rows that failed validation, with a reason. Nothing is dropped silently.';",
         "",
-        "CREATE MATERIALIZED VIEW IF NOT EXISTS " + db + ".events_mv TO " + db + ".events",
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS " + c.silverTable() + "_mv TO " + c.silverTable(),
         "DEFINER = admin SQL SECURITY DEFINER",
         "COMMENT 'Silver: parses valid raw rows into events'",
         "AS SELECT",
         String.join(",\n", selects),
-        "FROM " + db + ".raw",
+        "FROM " + c.bronzeTable(),
         "WHERE " + valid + ";",
         "",
         "CREATE MATERIALIZED VIEW IF NOT EXISTS "
-            + db
-            + ".events_rejected_mv TO "
-            + db
-            + ".events_rejected",
+            + c.silverRejectedTable()
+            + "_mv TO "
+            + c.silverRejectedTable(),
         "DEFINER = admin SQL SECURITY DEFINER",
         "COMMENT 'Silver: routes invalid raw rows to events_rejected with a reason'",
         "AS SELECT",
@@ -198,17 +202,28 @@ public final class WarehouseSqlGenerator {
         "        'bad_time') AS reason,",
         "    payload,",
         "    ingested_at",
-        "FROM " + db + ".raw",
+        "FROM " + c.bronzeTable(),
         "WHERE NOT (" + valid + ");",
         "");
   }
 
-  /** The gold rollup table and its view. */
-  private static String marts(DataContract c) {
-    String db = c.database();
+  /** The gold rollup tables and their views, one per mart in the contract. */
+  private static String gold(DataContract c) {
+    List<String> parts = new ArrayList<>();
+    parts.add("-- " + HEADER);
+    parts.add("-- Gold layer: per minute rollups read by the API, the detector, and the UI.");
+    for (DataContract.GoldTableSpec spec : c.goldTables()) {
+      parts.add(goldTable(c, spec));
+    }
+    return String.join("\n", parts) + "\n";
+  }
+
+  /** One gold table and the view that fills it from silver. */
+  private static String goldTable(DataContract c, DataContract.GoldTableSpec spec) {
+    String table = c.goldTable(spec);
     Map<String, FieldSpec> byName = new LinkedHashMap<>();
     c.fields().forEach(f -> byName.put(f.name(), f));
-    List<String> dimensions = c.mart().dimensions();
+    List<String> dimensions = spec.dimensions();
 
     List<String> columns = new ArrayList<>();
     columns.add(column("minute", "DateTime('UTC')", "Start of the minute bucket, UTC"));
@@ -226,7 +241,7 @@ public final class WarehouseSqlGenerator {
     columns.add(
         column("events", "SimpleAggregateFunction(sum, UInt64)", "Number of events in the bucket"));
     selects.add("    count() AS events");
-    for (Measure m : c.mart().measures()) {
+    for (Measure m : spec.measures()) {
       FieldSpec f = byName.get(m.field());
       String t = f.type().clickhouseType();
       for (String fn : m.functions()) {
@@ -278,30 +293,24 @@ public final class WarehouseSqlGenerator {
 
     return String.join(
         "\n",
-        "-- " + HEADER,
-        "-- Gold layer: per minute rollup read by the API, the detector, and the UI.",
-        "CREATE TABLE IF NOT EXISTS " + db + ".mart_events_1m",
+        "",
+        "CREATE TABLE IF NOT EXISTS " + table,
         "(",
         String.join(",\n", columns),
         ")",
         "ENGINE = AggregatingMergeTree",
         "PARTITION BY toYYYYMM(minute)",
         "ORDER BY (" + String.join(", ", orderBy) + ")",
-        "TTL minute + INTERVAL " + c.retentionDays().mart() + " DAY",
+        "TTL minute + INTERVAL " + c.retentionDays().gold() + " DAY",
         "COMMENT 'Gold: per minute rollup of events. Read counters with sum(), states with the -Merge functions.';",
         "",
-        "CREATE MATERIALIZED VIEW IF NOT EXISTS "
-            + db
-            + ".mart_events_1m_mv TO "
-            + db
-            + ".mart_events_1m",
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS " + table + "_mv TO " + table,
         "DEFINER = admin SQL SECURITY DEFINER",
-        "COMMENT 'Gold: aggregates new events into the per minute rollup'",
+        "COMMENT 'Gold: aggregates new events into " + spec.name() + "'",
         "AS SELECT",
         String.join(",\n", selects),
-        "FROM " + db + ".events",
-        "GROUP BY " + String.join(", ", groupBy) + ";",
-        "");
+        "FROM " + c.silverTable(),
+        "GROUP BY " + String.join(", ", groupBy) + ";");
   }
 
   /** The shell variables the SQL tests use, taken from the sample event. */
@@ -325,7 +334,17 @@ public final class WarehouseSqlGenerator {
     return String.join(
         "\n",
         "# " + HEADER,
-        "DB=" + shell(c.database()),
+        "BRONZE=" + shell(c.layers().bronze()),
+        "SILVER=" + shell(c.layers().silver()),
+        "GOLD=" + shell(c.layers().gold()),
+        "BRONZE_TABLE=" + shell(c.bronzeTable()),
+        "SILVER_TABLE=" + shell(c.silverTable()),
+        "SILVER_REJECTED_TABLE=" + shell(c.silverRejectedTable()),
+        "GOLD_TABLES=("
+            + c.goldTables().stream()
+                .map(m -> shell(c.goldTable(m)))
+                .collect(Collectors.joining(" "))
+            + ")",
         "SAMPLE_TYPE=" + shell(s.type()),
         "SAMPLE_SOURCE=" + shell(s.source()),
         "SAMPLE_SUBJECT=" + shell(s.subject() == null ? "" : s.subject()),

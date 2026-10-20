@@ -1,5 +1,11 @@
 # GENERATED from config/data-contract.yml by ./gradlew :bromo-app:generateWarehouseSql. Do not edit.
-DB='bromo'
+BRONZE='bronze'
+SILVER='silver'
+GOLD='gold'
+BRONZE_TABLE='bronze.events'
+SILVER_TABLE='silver.events'
+SILVER_REJECTED_TABLE='silver.events_rejected'
+GOLD_TABLES=('gold.events_1m')
 SAMPLE_TYPE='com.example.payment.v1'
 SAMPLE_SOURCE='sample-source'
 SAMPLE_SUBJECT='card-1'
