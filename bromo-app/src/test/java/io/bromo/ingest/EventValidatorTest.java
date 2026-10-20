@@ -98,7 +98,7 @@ class EventValidatorTest {
 
   @Test
   void timeFollowsTheEventsRetentionInTheContract() {
-    Duration retention = Duration.ofDays(contract.retentionDays().events());
+    Duration retention = Duration.ofDays(contract.retentionDays().silver());
     assertEquals(
         "/time",
         firstPointer(valid().put("time", NOW.minus(retention).minusSeconds(3600).toString())));

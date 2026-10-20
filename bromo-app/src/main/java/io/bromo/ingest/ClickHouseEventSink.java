@@ -32,10 +32,10 @@ public class ClickHouseEventSink implements EventSink {
     this.client = client;
     this.properties = properties;
     this.mapper = mapper;
-    this.table = contract.database() + ".raw";
+    this.table = contract.bronzeTable();
   }
 
-  /** Stores one raw row per payload, all under one request id. */
+  /** Stores one bronze row per payload, all under one request id. */
   @Override
   public void write(UUID requestId, List<String> payloads) {
     StringBuilder lines = new StringBuilder();

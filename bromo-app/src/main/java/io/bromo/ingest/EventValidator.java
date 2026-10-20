@@ -31,7 +31,7 @@ public class EventValidator {
   public EventValidator(Clock clock, DataContract contract) {
     this.clock = clock;
     this.contract = contract;
-    this.retention = Duration.ofDays(contract.retentionDays().events());
+    this.retention = Duration.ofDays(contract.retentionDays().silver());
     this.futureTolerance = Duration.ofMinutes(contract.event().futureToleranceMinutes());
   }
 

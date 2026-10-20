@@ -14,7 +14,8 @@ import java.util.UUID;
 public interface EventSink {
 
   /**
-   * Stores the raw event payloads of one request. Throws ApiException 503 when the target is down.
+   * Stores the event payloads of one request in the bronze layer. Throws ApiException 503 when the
+   * target is down.
    */
   void write(UUID requestId, List<String> payloads);
 }

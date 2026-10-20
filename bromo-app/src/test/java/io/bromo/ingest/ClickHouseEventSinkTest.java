@@ -34,7 +34,7 @@ class ClickHouseEventSinkTest {
     ArgumentCaptor<Map<String, String>> settings = ArgumentCaptor.forClass(Map.class);
     verify(client)
         .insertJsonEachRow(
-            eq(contract.database() + ".raw"),
+            eq(contract.bronzeTable()),
             eq("request_id, payload"),
             lines.capture(),
             eq("ingest_writer"),
