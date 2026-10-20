@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 class ArchitectureTest {
 
-  private static final List<String> SLICES =
+  private static final List<String> MODULES =
       List.of("ingest", "pipeline", "metrics", "findings", "chat");
 
   private static final JavaClasses PRODUCTION =
@@ -19,40 +19,41 @@ class ArchitectureTest {
           .importPackages("io.bromo");
 
   @Test
-  void slicesDoNotDependOnEachOther() {
-    for (String slice : SLICES) {
-      SliceRules.sliceIsIndependent("io.bromo", slice, SLICES).check(PRODUCTION);
+  void modulesDoNotDependOnEachOther() {
+    for (String module : MODULES) {
+      ModuleRules.moduleIsIndependent("io.bromo", module, MODULES).check(PRODUCTION);
     }
   }
 
   @Test
-  void sharedDoesNotDependOnSlices() {
-    SliceRules.sharedDoesNotDependOnSlices("io.bromo", SLICES).check(PRODUCTION);
+  void sharedDoesNotDependOnModules() {
+    ModuleRules.sharedDoesNotDependOnModules("io.bromo", MODULES).check(PRODUCTION);
   }
 
   @Test
   void nothingDependsOnBootstrap() {
-    SliceRules.nothingDependsOnBootstrap("io.bromo").check(PRODUCTION);
+    ModuleRules.nothingDependsOnBootstrap("io.bromo").check(PRODUCTION);
   }
 
   @Test
-  void ruleFailsWhenOneSliceImportsAnother() {
+  void ruleFailsWhenOneModuleImportsAnother() {
     JavaClasses fixtures = new ClassFileImporter().importPackages("io.bromo.fixtures");
-    List<String> fixtureSlices = List.of("slicea", "sliceb");
+    List<String> fixtureModules = List.of("modulea", "moduleb");
     assertThrows(
         AssertionError.class,
         () ->
-            SliceRules.sliceIsIndependent("io.bromo.fixtures", "slicea", fixtureSlices)
+            ModuleRules.moduleIsIndependent("io.bromo.fixtures", "modulea", fixtureModules)
                 .check(fixtures));
   }
 
   @Test
-  void ruleFailsWhenSharedImportsASlice() {
+  void ruleFailsWhenSharedImportsAModule() {
     JavaClasses fixtures = new ClassFileImporter().importPackages("io.bromo.fixtures");
     assertThrows(
         AssertionError.class,
         () ->
-            SliceRules.sharedDoesNotDependOnSlices("io.bromo.fixtures", List.of("slicea", "sliceb"))
+            ModuleRules.sharedDoesNotDependOnModules(
+                    "io.bromo.fixtures", List.of("modulea", "moduleb"))
                 .check(fixtures));
   }
 }

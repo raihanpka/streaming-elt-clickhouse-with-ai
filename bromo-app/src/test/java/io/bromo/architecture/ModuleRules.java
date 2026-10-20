@@ -5,38 +5,38 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import com.tngtech.archunit.lang.ArchRule;
 import java.util.List;
 
-/** Dependency rules for vertical slices, reusable on real code and on test fixtures. */
-final class SliceRules {
+/** Dependency rules for feature modules, reusable on real code and on test fixtures. */
+final class ModuleRules {
 
-  private SliceRules() {}
+  private ModuleRules() {}
 
-  /** A slice must not depend on any other slice. */
-  static ArchRule sliceIsIndependent(String base, String slice, List<String> allSlices) {
+  /** A module must not depend on any other module. */
+  static ArchRule moduleIsIndependent(String base, String module, List<String> allModules) {
     String[] others =
-        allSlices.stream()
-            .filter(s -> !s.equals(slice))
+        allModules.stream()
+            .filter(s -> !s.equals(module))
             .map(s -> base + "." + s + "..")
             .toArray(String[]::new);
     return noClasses()
         .that()
-        .resideInAPackage(base + "." + slice + "..")
+        .resideInAPackage(base + "." + module + "..")
         .should()
         .dependOnClassesThat()
         .resideInAnyPackage(others)
-        .because("slice " + slice + " must not import another slice")
+        .because("module " + module + " must not import another module")
         .allowEmptyShould(true);
   }
 
-  /** The shared package must not depend on any slice. */
-  static ArchRule sharedDoesNotDependOnSlices(String base, List<String> slices) {
-    String[] all = slices.stream().map(s -> base + "." + s + "..").toArray(String[]::new);
+  /** The shared package must not depend on any module. */
+  static ArchRule sharedDoesNotDependOnModules(String base, List<String> modules) {
+    String[] all = modules.stream().map(s -> base + "." + s + "..").toArray(String[]::new);
     return noClasses()
         .that()
         .resideInAPackage(base + ".shared..")
         .should()
         .dependOnClassesThat()
         .resideInAnyPackage(all)
-        .because("shared must not import a slice")
+        .because("shared must not import a module")
         .allowEmptyShould(true);
   }
 
@@ -48,7 +48,7 @@ final class SliceRules {
         .should()
         .dependOnClassesThat()
         .resideInAPackage(base + ".bootstrap..")
-        .because("only bootstrap may know every slice")
+        .because("only bootstrap may know every module")
         .allowEmptyShould(true);
   }
 }

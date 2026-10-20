@@ -1,8 +1,8 @@
 package io.bromo.fixtures.shared;
 
-import io.bromo.fixtures.slicea.Violator;
+import io.bromo.fixtures.modulea.Violator;
 
-/** Fixture class in shared that deliberately depends on a slice. */
+/** Fixture class in shared that deliberately depends on a module. */
 public class SharedViolator {
 
   Violator violator = new Violator();

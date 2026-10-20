@@ -4,7 +4,9 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
-/** Bromo entry point. Hosts the ingest, read, and chat slices. See {@code docs/ARCHITECTURE.md}. */
+/**
+ * Bromo entry point. Hosts the ingest, read, and chat modules. See {@code docs/ARCHITECTURE.md}.
+ */
 @SpringBootApplication(scanBasePackages = "io.bromo")
 @ConfigurationPropertiesScan(basePackages = "io.bromo")
 public class BromoApplication {
