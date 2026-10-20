@@ -1,0 +1,15 @@
+name: test-dataset
+license: https://example.org/license
+source:
+  type: csv
+time:
+  column: Time
+  unit: seconds
+event:
+  type: com.example.payment.v1
+  source: test-replay
+  id: "test-{row}"
+  subject: "card-{V1}"
+  data:
+    amount: { column: Amount, cast: float }
+    label: { column: Class, cast: int, values: { "0": ok, "1": fraud } }
