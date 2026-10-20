@@ -33,6 +33,8 @@ class WarehouseSqlGeneratorTest {
             "002_bronze.sql",
             "003_silver.sql",
             "004_gold.sql",
+            "maintenance/reprocess.sql",
+            "maintenance/reconcile.sql",
             "tests/contract-examples.sh"),
         generate(YAML).keySet());
   }
@@ -131,5 +133,28 @@ class WarehouseSqlGeneratorTest {
           committed,
           file.getKey() + " is out of date. Run ./gradlew :bromo-app:generateWarehouseSql");
     }
+  }
+
+  @Test
+  void reprocessRebuildsSilverAndEveryGoldTableFromBronze() {
+    String yaml =
+        YAML.replace(
+            "# Metrics exposed",
+            "  - name: events_5m\n    dimensions: []\n    measures: []\n\n# Metrics exposed");
+    String sql = generate(yaml).get("maintenance/reprocess.sql");
+    assertTrue(sql.contains("TRUNCATE TABLE gold.events_1m;"));
+    assertTrue(sql.contains("TRUNCATE TABLE gold.events_5m;"));
+    assertTrue(sql.contains("TRUNCATE TABLE silver.events;"));
+    assertTrue(sql.contains("INSERT INTO silver.events\nSELECT"));
+    assertTrue(sql.contains("FROM bronze.events"));
+    assertTrue(!sql.contains("TRUNCATE TABLE bronze"));
+  }
+
+  @Test
+  void reconcileHasOneCheckPerLayerStep() {
+    String sql = generate(YAML).get("maintenance/reconcile.sql");
+    assertTrue(sql.contains("'bronze_valid_vs_silver'"));
+    assertTrue(sql.contains("'bronze_invalid_vs_rejected'"));
+    assertTrue(sql.contains("'silver_vs_events_1m'"));
   }
 }
