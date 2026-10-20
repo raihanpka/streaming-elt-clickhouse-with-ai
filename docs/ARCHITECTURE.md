@@ -3,8 +3,8 @@
 Bromo is a streaming ELT pipeline into ClickHouse with a Java API and UI on top and a Python AI agent that
 investigates anomalies. This document is the canonical architecture reference.
 
-> **Status:** milestone M1 is implemented: ingest, the three warehouse layers, the data contract, and the replayer.
-> The read API, UI, agent, and chat are the target of later milestones, see the [roadmap](../README.md#roadmap).
+> **Status:** implemented: ingest, the three warehouse layers, the data contract, and the replayer. The read API, UI,
+> agent, and chat are the target design and are not built yet.
 
 ## 1. Principles
 
@@ -21,46 +21,37 @@ investigates anomalies. This document is the canonical architecture reference.
 
 ```mermaid
 flowchart LR
-    subgraph Sources
-        R[tools/replayer<br/>dataset slices and generator]
-        C[Any client<br/>CloudEvents over HTTP]
+    subgraph src["Sources"]
+        R["replayer"]
+        C["any client"]
     end
 
-    subgraph Backend["bromo-app (Java, Spring Boot)"]
-        IN[ingest]
-        PI[pipeline]
-        ME[metrics]
-        FI[findings]
-        CH[chat]
+    subgraph app["bromo-app (Java, Spring Boot)"]
+        IN["ingest"]
+        RD["read API<br/>pipeline, metrics, findings"]
+        CH["chat"]
     end
 
-    subgraph WH["ClickHouse"]
-        BR[bronze]
-        SI[silver]
-        GO[gold]
-        FD[agent_findings]
+    subgraph wh["ClickHouse"]
+        BR[("bronze")] --> SI[("silver")] --> GO[("gold")]
+        FD[("agent findings")]
     end
 
-    AG["bromo-agent (Python)<br/>detector and AI agent"]
-    LLM[LLM provider<br/>via LiteLLM]
-    UI[bromo-ui<br/>served by bromo-app]
+    AG["bromo-agent<br/>Python detector and AI agent"]
+    LLM["LLM provider<br/>via LiteLLM"]
+    UI["bromo-ui<br/>served by bromo-app"]
 
     R --> IN
     C --> IN
     IN --> BR
-    BR --> SI --> GO
-    PI --> GO
-    ME --> GO
-    FI --> FD
-    AG -->|read only| SI
-    AG -->|read only| GO
+    GO --> RD
+    FD --> RD
+    UI --> RD
+    UI --> CH
+    CH -->|gRPC| AG
+    wh -->|read only| AG
     AG -->|findings writer| FD
     AG --> LLM
-    CH -->|gRPC| AG
-    UI --> PI
-    UI --> ME
-    UI --> FI
-    UI --> CH
 ```
 
 ## 3. Components
@@ -90,10 +81,10 @@ sequenceDiagram
     participant W as ClickHouse
 
     S->>A: POST /api/v1/events (CloudEvents JSON, Bearer key)
-    A->>A: authenticate, validate, check size
+    Note over A: authenticate, validate, check size
     A->>W: INSERT into bronze (async insert, wait for flush)
-    W->>W: materialized view into silver, or silver rejected
-    W->>W: materialized view into gold
+    Note over W: view fills silver, or the silver rejected table
+    Note over W: view fills gold
     A-->>S: 200 OK { accepted }
 ```
 

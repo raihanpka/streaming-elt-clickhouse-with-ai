@@ -15,8 +15,8 @@ chat.
 *Named after Mount Bromo. Like volcanologists measure emissions to understand a mountain, Bromo measures your events to
 make them understandable.*
 
-> **Project status: work in progress.** The code is catching up with the architecture described here (see the
-> [roadmap](#roadmap)). What runs today is the ingest API, the three warehouse layers, and the replayer (milestone M1). Measurements
+> **Project status: work in progress.** Implemented: the ingest API, the three warehouse layers, the data contract,
+> and the replayer. The read API, web UI, anomaly agent, and chat described in the docs are not built yet. Measurements
 > so far are single machine baselines in [benchmarks/](benchmarks/README.md), and this README makes no capacity claims.
 
 ## What you will see
@@ -31,21 +31,12 @@ make them understandable.*
 
 ```mermaid
 flowchart LR
-    S[Sources<br/>replayer, any client] --> A[bromo-app<br/>Java API and UI]
-    A --> W
-
-    subgraph W["ClickHouse"]
-        direction LR
-        BR[bronze] --> SI[silver] --> GO[gold]
-    end
-
-    AG[bromo-agent<br/>Python detector and AI agent]
-    GO --> AG
-    SI --> AG
-    AG --> FD[agent_findings]
-    FD --> A
-    A -->|gRPC| AG
-    A --> U[Web UI and chat]
+    S["Sources<br/>replayer or any client"] -->|CloudEvents over HTTP| IN["Java API<br/>ingest"]
+    IN -->|insert| BR[("Bronze<br/>as received")]
+    BR -->|view| SI[("Silver<br/>typed and validated")]
+    SI -->|view| GO[("Gold<br/>per minute tables")]
+    GO --> API["Java API and UI<br/>health, analytics, findings, chat"]
+    GO --> AG["AI agent<br/>Python"]
 ```
 
 - **Java (`bromo-app`)** owns ingest, the read API, auth, rate limits, the spend cap, and the UI. Organized in feature
@@ -114,8 +105,8 @@ curl -X POST http://localhost:8080/api/v1/events \
 ```
 
 Replay a dataset slice and check the layers: see [tools/replayer/README.md](tools/replayer/README.md) and
-`infra/clickhouse/maintenance/run.sh reconcile`. The read API, UI, and agent arrive in the next
-[roadmap](#roadmap) milestones, see [docs/API.md](docs/API.md) for the target contract.
+`infra/clickhouse/maintenance/run.sh reconcile`. The read API, UI, and agent are described in
+[docs/API.md](docs/API.md) and [docs/AGENT.md](docs/AGENT.md) but are not implemented yet.
 
 ## Data
 
@@ -148,16 +139,9 @@ docs/             Architecture, data, agent, API, operations, decisions
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Decision records and prior art |
 | [benchmarks/](benchmarks/README.md) | Performance and evaluation results |
 
-## Roadmap
+## Out of scope
 
-| Milestone | Delivers |
-|---|---|
-| M1 Pipeline | Single-node ClickHouse, bronze, silver, and gold layers with rejects and reconciliation, slimmed Java ingest in feature modules, dataset replayer |
-| M2 Analytics | Pipeline status and metrics endpoints, UI views for pipeline health and analytics, synthetic event generator with anomaly manifest |
-| M3 Agent | Read-only agent user, detector, agent loop, findings, chat over gRPC with limits |
-| M4 Evidence and demo | Evaluation harness, benchmarks, public single-VPS deployment |
-
-Not planned: multi-shard clusters, Flink or Spark, a BI tool, agent actions that change data, per-event LLM calls,
+Multi-shard clusters, Flink or Spark, a BI tool, agent actions that change data, per-event LLM calls,
 GraalVM native images, and Helm charts.
 
 ## Contributing
