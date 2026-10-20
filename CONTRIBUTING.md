@@ -45,7 +45,7 @@ Python components appear as the plan progresses. Their commands are listed in [A
 Single line, `type(scope): summary`, no body.
 
 Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`.
-Scopes: `ingest`, `pipeline`, `metrics`, `findings`, `chat`, `agent`, `warehouse`, `replayer`, `ui`, `infra`, `docs`.
+Scopes: `app`, `ingest`, `pipeline`, `metrics`, `findings`, `chat`, `agent`, `warehouse`, `replayer`, `ui`, `infra`, `docs`.
 
 Example: `feat(ingest): reject events above the size limit`
 

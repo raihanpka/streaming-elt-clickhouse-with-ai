@@ -27,7 +27,7 @@ Non-negotiable. They apply to every edit.
   docstring), terse, for example `/** Validates the event and writes it to ClickHouse. */`. Test methods are exempt,
   name them after the behavior.
 - Commits are single-line `type(scope): summary`, no body, no bullets. Types: `feat`, `fix`, `refactor`, `perf`,
-  `test`, `docs`, `build`, `ci`, `chore`. Scope is a slice or area: `ingest`, `chat`, `agent`, `warehouse`, `replayer`,
+  `test`, `docs`, `build`, `ci`, `chore`. Scope is a slice or area: `app`, `ingest`, `chat`, `agent`, `warehouse`, `replayer`,
   `ui`, `infra`, `docs`.
 - Commit only when the human asks in the current message. Never push. Run the focused build or test first and
   commit only when it is green.
