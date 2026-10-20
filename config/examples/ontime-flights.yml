@@ -1,0 +1,207 @@
+# Data contract for the OnTime flights dataset (US flights with delay causes, from BTS).
+# It is an example of adapting Bromo to different data: copy it over config/data-contract.yml, or point
+# BROMO_DATA_CONTRACT at it, then regenerate the SQL (see config/data-contract.yml for the workflow).
+#
+# Questions this contract is built for, and that the AI agent can answer from the gold tables:
+#   Why did delays rise for airline X in this window? Which cause (carrier, weather, NAS, security, late aircraft)
+#   dominates? Which origin states are affected? How many flights were cancelled and why?
+#
+# Replay data with tools/replayer/datasets/ontime-flights.yml.
+
+version: 1
+
+layers:
+  bronze: bronze
+  silver: silver
+  gold: gold
+
+retentionDays:
+  bronze: 30
+  silver: 90
+  silverRejected: 30
+  gold: 365
+
+event:
+  typePattern: '^[a-z0-9][a-z0-9._-]*\.v[0-9]+$'
+  maxIdLength: 256
+  maxSourceLength: 1024
+  futureToleranceMinutes: 5
+
+fields:
+  - name: airline
+    path: airline
+    type: low_cardinality_string
+    nullable: false
+    description: Two letter code of the airline that reported the flight, for example AA or DL
+  - name: origin
+    path: origin
+    type: low_cardinality_string
+    nullable: false
+    description: IATA code of the departure airport, for example JFK
+  - name: origin_state
+    path: origin_state
+    type: low_cardinality_string
+    nullable: false
+    description: Two letter US state of the departure airport
+  - name: dest
+    path: dest
+    type: low_cardinality_string
+    nullable: false
+    description: IATA code of the arrival airport
+  - name: dest_state
+    path: dest_state
+    type: low_cardinality_string
+    nullable: false
+    description: Two letter US state of the arrival airport
+  - name: cancelled
+    path: cancelled
+    type: int64
+    nullable: false
+    description: 1 when the flight was cancelled, otherwise 0. Summing it counts cancelled flights.
+  - name: cancellation_code
+    path: cancellation_code
+    type: low_cardinality_string
+    nullable: false
+    description: Why a flight was cancelled. A airline, B weather, C national air system, D security. Empty when not cancelled.
+  - name: diverted
+    path: diverted
+    type: int64
+    nullable: false
+    description: 1 when the flight landed at another airport, otherwise 0
+  - name: dep_delay_minutes
+    path: dep_delay_minutes
+    type: int64
+    nullable: true
+    description: Departure delay in minutes, negative when early. NULL for cancelled flights.
+  - name: arr_delay_minutes
+    path: arr_delay_minutes
+    type: int64
+    nullable: true
+    description: Arrival delay in minutes, negative when early. NULL for cancelled flights.
+  - name: carrier_delay_minutes
+    path: carrier_delay_minutes
+    type: int64
+    nullable: true
+    description: Minutes of the delay caused by the airline itself (crew, cleaning, baggage). Filled when the flight is 15 minutes or more late.
+  - name: weather_delay_minutes
+    path: weather_delay_minutes
+    type: int64
+    nullable: true
+    description: Minutes of the delay caused by extreme weather. Filled when the flight is 15 minutes or more late.
+  - name: nas_delay_minutes
+    path: nas_delay_minutes
+    type: int64
+    nullable: true
+    description: Minutes of the delay caused by the national air system (airport operations, heavy traffic, air traffic control)
+  - name: security_delay_minutes
+    path: security_delay_minutes
+    type: int64
+    nullable: true
+    description: Minutes of the delay caused by security events such as evacuations or screening problems
+  - name: late_aircraft_delay_minutes
+    path: late_aircraft_delay_minutes
+    type: int64
+    nullable: true
+    description: Minutes of the delay caused by the previous flight of the same aircraft arriving late
+  - name: distance_miles
+    path: distance_miles
+    type: int64
+    nullable: false
+    description: Distance between the airports in miles
+
+goldTables:
+  - name: delays_by_airline_1m
+    dimensions: [airline]
+    measures: &delay_measures
+      - field: arr_delay_minutes
+        functions: [sum, max, p95]
+      - field: cancelled
+        functions: [sum]
+      - field: diverted
+        functions: [sum]
+      - field: carrier_delay_minutes
+        functions: [sum]
+      - field: weather_delay_minutes
+        functions: [sum]
+      - field: nas_delay_minutes
+        functions: [sum]
+      - field: security_delay_minutes
+        functions: [sum]
+      - field: late_aircraft_delay_minutes
+        functions: [sum]
+  - name: delays_by_origin_state_1m
+    dimensions: [origin_state]
+    measures: *delay_measures
+
+metrics:
+  - name: flights
+    goldTable: delays_by_airline_1m
+    unit: flights
+    description: Number of flights scheduled to depart
+    expression: sum(events)
+    breakdowns: [airline]
+  - name: cancelled_flights
+    goldTable: delays_by_airline_1m
+    unit: flights
+    description: Number of cancelled flights
+    expression: sum(cancelled_sum)
+    breakdowns: [airline]
+  - name: arrival_delay_p95
+    goldTable: delays_by_airline_1m
+    unit: minutes
+    description: 95th percentile of arrival delay
+    expression: quantileMerge(0.95)(arr_delay_minutes_p95_state)
+    breakdowns: [airline]
+  - name: weather_delay
+    goldTable: delays_by_airline_1m
+    unit: minutes
+    description: Total delay minutes caused by weather
+    expression: sum(weather_delay_minutes_sum)
+    breakdowns: [airline]
+  - name: carrier_delay
+    goldTable: delays_by_airline_1m
+    unit: minutes
+    description: Total delay minutes caused by the airline
+    expression: sum(carrier_delay_minutes_sum)
+    breakdowns: [airline]
+  - name: nas_delay
+    goldTable: delays_by_airline_1m
+    unit: minutes
+    description: Total delay minutes caused by the national air system
+    expression: sum(nas_delay_minutes_sum)
+    breakdowns: [airline]
+  - name: late_aircraft_delay
+    goldTable: delays_by_airline_1m
+    unit: minutes
+    description: Total delay minutes caused by a late previous flight of the aircraft
+    expression: sum(late_aircraft_delay_minutes_sum)
+    breakdowns: [airline]
+  - name: delay_by_state
+    goldTable: delays_by_origin_state_1m
+    unit: minutes
+    description: Maximum arrival delay per departure state
+    expression: max(arr_delay_minutes_max)
+    breakdowns: [origin_state]
+
+sample:
+  type: gov.bts.flight.v1
+  source: bts-ontime
+  subject: N123AA
+  data:
+    airline: AA
+    origin: JFK
+    origin_state: NY
+    dest: LAX
+    dest_state: CA
+    cancelled: 0
+    cancellation_code: ""
+    diverted: 0
+    dep_delay_minutes: 12
+    arr_delay_minutes: 25
+    carrier_delay_minutes: 10
+    weather_delay_minutes: 0
+    nas_delay_minutes: 15
+    security_delay_minutes: 0
+    late_aircraft_delay_minutes: 0
+    distance_miles: 2475
+    flight_number: "100"
