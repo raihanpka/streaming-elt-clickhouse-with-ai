@@ -183,12 +183,14 @@ Bromo is also a template. Anyone must be able to change the data model without e
 ## Commands
 
 ```bash
-./gradlew build              # compile, Spotless check, ArchUnit, tests
-./gradlew spotlessApply      # format Java
-./gradlew :bromo-app:bootRun # run the API locally
-docker compose -f infra/docker/docker-compose.yml up -d
-ruff check . && ruff format --check . && mypy bromo-agent   # Python quality
-pytest                                                      # Python tests
+./gradlew build                                # compile, Spotless check, ArchUnit, tests (needs Docker for the integration tests)
+./gradlew spotlessApply                        # format Java
+./gradlew :bromo-app:generateWarehouseSql      # regenerate ClickHouse SQL after editing config/data-contract.yml
+./gradlew :bromo-app:bootRun                   # run the API locally (from the repository root, with .env loaded)
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
+infra/clickhouse/tests/run.sh                  # SQL tests on a throwaway ClickHouse; CONTRACT_FILE=x.yml to try another contract
+infra/clickhouse/maintenance/run.sh reconcile  # compare the layers; also: reprocess, count SOURCE
+cd tools/replayer && .venv/bin/python -m pytest && .venv/bin/ruff check .   # replayer tests and lint
 ```
 
 Some commands exist only after the matching [roadmap](README.md#roadmap) milestone is done.
