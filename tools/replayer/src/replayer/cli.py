@@ -7,6 +7,7 @@ import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from itertools import batched, chain
 from pathlib import Path
 
 from .events import build_event
@@ -39,32 +40,41 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def run(argv: list[str], sleep: Callable[[float], None] = time.sleep) -> int:
-    """Run a replay and return the process exit code."""
+    """Run a replay and return the process exit code. Rows are streamed, never loaded all at once."""
     args = parse_args(argv)
     mapping: DatasetMapping = load_mapping(args.mapping)
-    rows = list(select_rows(args.file, mapping, args.since, args.until, args.limit))
-    summary = {"dataset": mapping.name, "source": mapping.event_source, "planned": len(rows), "sent": 0}
-    if not rows:
+    rows = select_rows(args.file, mapping, args.since, args.until, args.limit)
+    summary: dict[str, object] = {"dataset": mapping.name, "source": mapping.event_source, "planned": 0, "sent": 0}
+    first = next(rows, None)
+    if first is None:
         args.summary.write_text(json.dumps(summary))
         print("nothing to replay")
         return 0
-    timeline = Timeline(rows[0].time, time.time(), args.speed, sleep=sleep)
+    timeline = Timeline(first.time, time.time(), args.speed, sleep=sleep)
     sender = Sender(args.url, args.api_key, sleep=sleep)
     code = 0
+    planned = 0
+    sent = 0
+    last = first
     try:
-        for start in range(0, len(rows), args.batch_size):
-            chunk = rows[start : start + args.batch_size]
-            timeline.wait_until(timeline.event_time(chunk[-1].time))
+        for chunk in batched(chain([first], rows), args.batch_size):
+            last = chunk[-1]
+            planned += len(chunk)
+            timeline.wait_until(timeline.event_time(last.time))
             events = [build_event(mapping, r, iso(timeline.event_time(r.time))) for r in chunk]
             if not args.dry_run:
-                summary["sent"] += sender.send(events)
+                sent += sender.send(events)
     except ReplayError as error:
         print(f"replay failed: {error}", file=sys.stderr)
         code = 1
-    summary["first_id"] = mapping.id_template.format(row=rows[0].number, **rows[0].values)
-    summary["last_id"] = mapping.id_template.format(row=rows[-1].number, **rows[-1].values)
+    summary.update(
+        planned=planned,
+        sent=sent,
+        first_id=mapping.id_template.format(row=first.number, **first.values),
+        last_id=mapping.id_template.format(row=last.number, **last.values),
+    )
     args.summary.write_text(json.dumps(summary))
-    print(f"planned={summary['planned']} sent={summary['sent']} source={mapping.event_source}")
+    print(f"planned={planned} sent={sent} source={mapping.event_source}")
     return code
 
 
