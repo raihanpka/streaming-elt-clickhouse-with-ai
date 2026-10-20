@@ -21,6 +21,27 @@ the hardware, and the versions used.
 | Agent evaluation | Recall, precision, time to finding, explanation hit, cost per finding, per model | M4 |
 | Throughput and failures | Ingest ceiling on the reference machine, duplicate rate, recovery after restart | M4 |
 
+## Results
+
+### Resource baseline, ClickHouse idle (milestone M1)
+
+| Item | Value |
+|---|---|
+| Machine | Apple M3, 8 cores, 16 GB RAM, OrbStack Docker VM with 8 CPUs and about 6 GB RAM |
+| Image | `clickhouse/clickhouse-server:26.3.56.2`, architecture `arm64` (checked with `docker image inspect`) |
+| Image size | 1.106 GB |
+| Idle memory | about 197 MiB of the 2 GiB limit, CPU about 4 percent just after start |
+| Volume | about 100 kB when empty |
+| Health | `curl localhost:8123/ping` returns `Ok.` |
+
+Commands:
+
+```bash
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
+docker stats --no-stream bromo-clickhouse
+docker system df
+```
+
 ## Layout
 
 ```
