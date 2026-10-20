@@ -14,7 +14,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "streaming-elt-clickhouse-with-ai"
 
-include(
-    "bromo-core",
-    "bromo-app",
-)
+include("bromo-app")

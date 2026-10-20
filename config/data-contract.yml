@@ -1,0 +1,118 @@
+# Bromo data contract. This is the one file you edit to adapt Bromo to your own events.
+#
+# What reads it:
+#   the ingest API: validation rules and the typed fields it checks
+#   the SQL generator: tables, views, rollups, and column comments in ClickHouse
+#   the metrics API and the AI agent: metric definitions and descriptions
+#   the tests: the sample event at the bottom
+#
+# After editing, regenerate the warehouse SQL and run the tests:
+#   ./gradlew :bromo-app:generateWarehouseSql
+#   ./gradlew build
+#
+# Names use lowercase letters, digits, and underscores. Descriptions become ClickHouse column comments,
+# and the AI agent reads them as documentation, so write them for a reader who does not know your data.
+
+version: 1
+
+# The three warehouse layers, each a ClickHouse database with its own tables.
+# Rename them to share a ClickHouse server, for example shop_bronze, shop_silver, shop_gold.
+#   bronze: table events                        exactly what was received
+#   silver: tables events and events_rejected   parsed, typed, validated
+#   gold:   one table per entry in goldTables   per minute rollups
+layers:
+  bronze: bronze
+  silver: silver
+  gold: gold
+
+# How long each table group keeps data, in days.
+retentionDays:
+  bronze: 30
+  silver: 90
+  silverRejected: 30
+  gold: 365
+
+# Rules for the CloudEvents envelope.
+event:
+  # Event types must match this pattern. The default is {domain}.{name}.v{version}.
+  typePattern: '^[a-z0-9][a-z0-9._-]*\.v[0-9]+$'
+  maxIdLength: 256
+  maxSourceLength: 1024
+  # How far in the future an event time may be, in minutes.
+  futureToleranceMinutes: 5
+
+# Fields promoted out of the event's "data" object into typed columns of the events table.
+# Everything else in "data" is kept in the attrs map, so unknown fields never break ingestion.
+#   name:        column name in the events table
+#   path:        key inside "data" (one level)
+#   type:        string | low_cardinality_string | float64 | int64 | bool
+#   nullable:    true keeps NULL when the field is absent. Use false to store a default instead.
+#   description: becomes the column comment
+fields:
+  - name: amount
+    path: amount
+    type: float64
+    nullable: true
+    description: Numeric amount from data.amount, NULL when the event has none
+  - name: label
+    path: label
+    type: low_cardinality_string
+    nullable: false
+    description: Category from data.label, for example fraud or ok, empty when absent
+
+# Tables of the gold layer, one per entry. Each table is named <name> and groups events per minute.
+#   dimensions: columns to group by. "type" and "source" are always included. Other entries must be
+#               non-nullable string or low_cardinality_string fields from above.
+#   measures:   numeric fields to aggregate. Functions: sum, min, max, p95.
+# Add another entry for a different grouping, for example one per customer.
+goldTables:
+  - name: events_1m
+    dimensions: [label]
+    measures:
+      - field: amount
+        functions: [sum, p95]
+
+# Metrics exposed by the API and described to the AI agent.
+#   goldTable:  the entry in goldTables that holds the data
+#   expression: SQL over that gold table, evaluated per time bucket
+#   breakdowns: dimensions the metric can be split by
+metrics:
+  - name: event_count
+    goldTable: events_1m
+    unit: events
+    description: Number of events
+    expression: sum(events)
+    breakdowns: [type, source, label]
+  - name: amount_sum
+    goldTable: events_1m
+    unit: currency
+    description: Sum of amount over events that have an amount
+    expression: sum(amount_sum)
+    breakdowns: [type, source, label]
+  - name: amount_p95
+    goldTable: events_1m
+    unit: currency
+    description: 95th percentile of amount
+    expression: quantileMerge(0.95)(amount_p95_state)
+    breakdowns: [type, source, label]
+
+# Optional: accept plain JSON that is not CloudEvents (Content-Type application/json without ce-* headers).
+# Each binding is a JSON Pointer into the body ("pointer") or a fixed value ("constant").
+# Remove the section to accept CloudEvents only.
+# intake:
+#   plainJson:
+#     id:      { pointer: /orderId }
+#     time:    { pointer: /createdAt }
+#     source:  { constant: shop-backend }
+#     type:    { constant: com.shop.order.v1 }
+#     subject: { pointer: /customerId }
+
+# A valid example. Tests and the SQL tests send this event and check that every field arrives typed.
+sample:
+  type: com.example.payment.v1
+  source: sample-source
+  subject: card-1
+  data:
+    amount: 42.5
+    label: ok
+    merchant: m1

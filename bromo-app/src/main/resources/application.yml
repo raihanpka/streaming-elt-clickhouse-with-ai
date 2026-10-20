@@ -3,8 +3,6 @@ spring:
     name: bromo
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
-  jackson:
-    default-property-inclusion: non_null
 
 server:
   port: 8080
@@ -14,30 +12,25 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics
+        include: health,info,prometheus
   endpoint:
     health:
       probes:
         enabled: true
-      show-details: when_authorized
-  observations:
-    annotations:
-      enabled: true
-
-# Bromo-specific config. The cassandra and export keys are removed in milestone M1.
-bromo:
-  kafka:
-    topics:
-      raw: raw.events.v1
-      enriched: enriched.events.v1
-      metrics: metrics.hourly.v1
-  cassandra:
-    keyspace: bromo
-  export:
-    posthog:
-      enabled: false
 
 logging:
   level:
     root: INFO
-    io.bromo: DEBUG
+    io.bromo: INFO
+
+bromo:
+  contract:
+    path: ${BROMO_DATA_CONTRACT:config/data-contract.yml}
+  clickhouse:
+    url: http://${CLICKHOUSE_HOST:localhost}:${CLICKHOUSE_HTTP_PORT:8123}
+  ingest:
+    max-event-bytes: ${BROMO_MAX_EVENT_BYTES:65536}
+    max-batch-events: ${BROMO_MAX_BATCH_EVENTS:500}
+    clickhouse-user: ingest_writer
+    clickhouse-password: ${CLICKHOUSE_INGEST_PASSWORD:}
+    api-keys: ${BROMO_API_KEY:}

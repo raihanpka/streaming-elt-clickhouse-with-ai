@@ -8,23 +8,23 @@
 **A self-hosted streaming ELT pipeline into ClickHouse, with an AI agent that detects and explains data and anomalies.**
 
 Send events as CloudEvents over HTTP. Bromo loads them into ClickHouse, models them inside the
-warehouse (raw, events, marts), and shows pipeline health, analytics, and findings in a web UI. A Python agent watches
-the marts, detects anomalies with statistics, and explains anomalies and any selected data with read-only SQL. You can ask questions in the web
+warehouse in three layers (bronze, silver, gold), and shows pipeline health, analytics, and findings in a web UI. A Python agent watches
+the gold tables, detects anomalies with statistics, and explains anomalies and any selected data with read-only SQL. You can ask questions in the web
 chat.
 
 *Named after Mount Bromo. Like volcanologists measure emissions to understand a mountain, Bromo measures your events to
 make them understandable.*
 
 > **Project status: work in progress.** The code is catching up with the architecture described here (see the
-> [roadmap](#roadmap)). What runs today is the ingest path only. No benchmarks have been run yet, and this README
-> states no performance claims.
+> [roadmap](#roadmap)). What runs today is the ingest API, the three warehouse layers, and the replayer (milestone M1). Measurements
+> so far are single machine baselines in [benchmarks/](benchmarks/README.md), and this README makes no capacity claims.
 
 ## What you will see
 
 | View | Shows |
 |---|---|
 | Pipeline health | Throughput, freshness, end-to-end lag, reject rate, and reconciliation between stages |
-| Analytics | Volume, amounts, and rates per minute with breakdowns, read from gold marts |
+| Analytics | Volume, amounts, and rates per minute with breakdowns, read from the gold layer |
 | Findings and chat | Anomalies the agent found, each with the SQL evidence, and a chat that answers with the SQL it ran |
 
 ## Architecture
@@ -36,25 +36,46 @@ flowchart LR
 
     subgraph W["ClickHouse"]
         direction LR
-        RAW[raw] --> EV[events] --> MA[mart_*]
+        BR[bronze] --> SI[silver] --> GO[gold]
     end
 
     AG[bromo-agent<br/>Python detector and AI agent]
-    MA --> AG
-    EV --> AG
+    GO --> AG
+    SI --> AG
     AG --> FD[agent_findings]
     FD --> A
     A -->|gRPC| AG
     A --> U[Web UI and chat]
 ```
 
-- **Java (`bromo-app`)** owns ingest, the read API, auth, rate limits, the spend cap, and the UI. Organized in vertical
-  slices.
+- **Java (`bromo-app`)** owns ingest, the read API, auth, rate limits, the spend cap, and the UI. Organized in feature
+  modules.
 - **Python (`bromo-agent`)** owns detection and the agent. It is internal and never exposed.
 - **ClickHouse** is the only datastore. Transformation is ELT with materialized views.
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DATA.md](docs/DATA.md),
 [docs/AGENT.md](docs/AGENT.md).
+
+## Warehouse layers
+
+Bromo stores data in three layers, the medallion layout. Each layer is its own ClickHouse database with several tables.
+A layer is a stage of data quality, not a deployment environment.
+
+| Layer | What it is |
+|---|---|
+| **Bronze** | Events exactly as the ingest API received them, unmodified and append-only, kept for a short time. Because nothing is interpreted here, a bug in later logic never loses data. |
+| **Silver** | The clean copy: events parsed into typed columns, validated, and deduplicated. Rows that fail validation are kept in a separate table with a reason. |
+| **Gold** | Per minute tables built for questions (volumes, sums, percentiles, distinct counts). The API, the UI, and the anomaly detector read gold. |
+
+Details, table lists, and rebuild rules are in [docs/DATA.md](docs/DATA.md#warehouse-layers).
+
+## Make it yours
+
+Everything specific to your data lives in one file, [config/data-contract.yml](config/data-contract.yml): the event rules,
+which fields become typed columns, the layer names, the gold tables, and the metrics. Edit it, run
+`./gradlew :bromo-app:generateWarehouseSql`, and the ingest validation, the ClickHouse SQL, the metric list, the agent's
+context, and the tests all follow. The tests build their events from a sample in the same file, so they work for any
+contract. See [docs/DATA.md](docs/DATA.md#the-data-contract).
 
 ## Design choices
 
@@ -69,15 +90,17 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DATA.md](docs/DATA.
 
 Where a source does not fully apply, [docs/DECISIONS.md](docs/DECISIONS.md#prior-art-and-its-limits) says so.
 
-## Quick start (current ingest path)
+## Quick start
 
-Prerequisites: Docker Engine 25+ and JDK 21+.
+Prerequisites: Docker Engine 25+ (or OrbStack), JDK 21+, Python 3.12+ with `uv` for the replayer.
 
 ```bash
 git clone https://github.com/raihanpka/streaming-elt-clickhouse-with-ai
 cd streaming-elt-clickhouse-with-ai
-docker compose -f infra/docker/docker-compose.yml up -d
-./gradlew :bromo-app:bootRun
+cp .env.example .env            # then fill in the required secrets, for example with: openssl rand -hex 16
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
+set -a; . ./.env; set +a
+./gradlew :bromo-app:bootRun    # API on :8080
 ```
 
 Send an event:
@@ -85,18 +108,14 @@ Send an event:
 ```bash
 curl -X POST http://localhost:8080/api/v1/events \
   -H "Content-Type: application/cloudevents+json" \
-  -d '{
-    "specversion": "1.0",
-    "source": "my-app",
-    "type": "com.example.payment.v1",
-    "id": "evt_001",
-    "time": "2026-06-19T10:30:00Z",
-    "data": { "amount": 42.5 }
-  }'
+  -H "Authorization: Bearer $BROMO_API_KEY" \
+  -d '{"specversion":"1.0","id":"evt_001","source":"my-app","type":"com.example.payment.v1",
+       "time":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","data":{"amount":42.5,"label":"ok"}}'
 ```
 
-This quick start changes as tasks land. The target flow and API are in [docs/API.md](docs/API.md) and
-[docs/OPERATIONS.md](docs/OPERATIONS.md).
+Replay a dataset slice and check the layers: see [tools/replayer/README.md](tools/replayer/README.md) and
+`infra/clickhouse/maintenance/run.sh reconcile`. The read API, UI, and agent arrive in the next
+[roadmap](#roadmap) milestones, see [docs/API.md](docs/API.md) for the target contract.
 
 ## Data
 
@@ -121,7 +140,7 @@ docs/             Architecture, data, agent, API, operations, decisions
 
 | Document | About |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows, vertical slices, failure modes |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows, feature modules, failure modes |
 | [docs/DATA.md](docs/DATA.md) | Warehouse layers, tables, users, datasets |
 | [docs/AGENT.md](docs/AGENT.md) | Detector, agent, safety, evaluation |
 | [docs/API.md](docs/API.md) | HTTP, event, and gRPC contracts |
@@ -133,7 +152,7 @@ docs/             Architecture, data, agent, API, operations, decisions
 
 | Milestone | Delivers |
 |---|---|
-| M1 Pipeline | Single-node ClickHouse, `raw` / `events` / `mart_*` layers with rejects and reconciliation, slimmed Java ingest in vertical slices, dataset replayer |
+| M1 Pipeline | Single-node ClickHouse, bronze, silver, and gold layers with rejects and reconciliation, slimmed Java ingest in feature modules, dataset replayer |
 | M2 Analytics | Pipeline status and metrics endpoints, UI views for pipeline health and analytics, synthetic event generator with anomaly manifest |
 | M3 Agent | Read-only agent user, detector, agent loop, findings, chat over gRPC with limits |
 | M4 Evidence and demo | Evaluation harness, benchmarks, public single-VPS deployment |

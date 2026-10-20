@@ -1,79 +1,24 @@
 [versions]
-# Build
-# Java: minimum 21 LTS required. System JDK 21+ is used to compile (no
-#   toolchain lock-in). Output is Java 21 bytecode and runs on any JDK 21+.
+# Java: minimum 21 LTS. The system JDK 21 or newer compiles the code, there is no toolchain lock in.
 java = "21"
 spring-boot = "4.1.0"
-
-# Infrastructure
-kafka = "4.3.0"
-postgresql = "42.7.11"
-lettuce = "7.6.0.RELEASE"
-
-# Observability
-# micrometer-tracing is BOM-managed by Spring Boot 4.1.
-# opentelemetry is pinned to current stable; switch to opentelemetry-bom
-#   if more otel modules get added.
-opentelemetry = "1.63.0"
 
 # Test
 testcontainers = "2.0.5"
 archunit = "1.4.2"
 spotless = "8.7.0"
-jacoco = "0.8.13"
 
 [libraries]
-# Spring Boot starters
+# Spring Boot starters, versions come from the Spring Boot BOM
 spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
-spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
 spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
-spring-boot-starter-data-cassandra = { module = "org.springframework.boot:spring-boot-starter-data-cassandra" }
-spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa" }
-spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
-spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security" }
-spring-kafka = { module = "org.springframework.kafka:spring-kafka" }
-springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.3" }
-
-# Drivers
-postgresql-jdbc = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
-# Cassandra driver comes transitively from spring-boot-starter-data-cassandra (BOM-managed).
-lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
-
-# Migration
-flyway-core = { module = "org.flywaydb:flyway-core" }
-flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }
-
-# Observability
-micrometer-tracing-bridge-otel = { module = "io.micrometer:micrometer-tracing-bridge-otel" }
-opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version.ref = "opentelemetry" }
-
-# CloudEvents
-cloudevents-core = { module = "io.cloudevents:cloudevents-core", version = "4.1.1" }
-cloudevents-json-jackson = { module = "io.cloudevents:cloudevents-json-jackson", version = "4.1.1" }
-cloudevents-http-basic = { module = "io.cloudevents:cloudevents-http-basic", version = "4.1.1" }
 
 # Test
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
-spring-kafka-test = { module = "org.springframework.kafka:spring-kafka-test" }
-testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
-testcontainers-kafka = { module = "org.testcontainers:kafka", version.ref = "testcontainers" }
-testcontainers-cassandra = { module = "org.testcontainers:cassandra", version.ref = "testcontainers" }
-testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
-testcontainers-gcloud = { module = "org.testcontainers:gcloud", version.ref = "testcontainers" }
+testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
-
-# Tooling
-spotless-plugin = { module = "com.diffplug.spotless:spotless-plugin-gradle", version.ref = "spotless" }
-spotless-google-java-format = { module = "com.google.googlejavaformat:google-java-format", version = "1.35.0" }
-jacoco-tool = { module = "org.jacoco:org.jacoco.core", version.ref = "jacoco" }
-
-[bundles]
-spring-boot-web = ["spring-boot-starter-web", "spring-boot-starter-validation", "spring-boot-starter-actuator", "springdoc-openapi"]
-spring-boot-data = ["spring-boot-starter-data-jpa", "spring-boot-starter-data-redis", "spring-boot-starter-data-cassandra"]
-testcontainers-infra = ["testcontainers-junit-jupiter", "testcontainers-kafka", "testcontainers-cassandra", "testcontainers-postgresql"]
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version = "1.1.7" }
-java = { id = "java" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

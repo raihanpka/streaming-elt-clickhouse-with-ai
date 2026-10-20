@@ -66,7 +66,7 @@ shard by 2 replica example needs seven containers and is not required for any cl
   out of scope.
 - Pin versions in compose and in `gradle/libs.versions.toml`. Upgrade one component at a time and rerun the
   reconciliation tests and benchmarks.
-- Everything is rebuildable from `raw` and from the source data. A demo needs no backup. For real use, snapshot the
+- Everything is rebuildable from bronze and from the source data. A demo needs no backup. For real use, snapshot the
   ClickHouse volume and test a restore.
 
 ## Configuration
@@ -84,10 +84,6 @@ listed there with its default and a comment. Copy it to `.env` and never commit 
   never log them.
 - Static keys and tokens are a deliberate simplification. A key table in ClickHouse is the upgrade when there is more
   than one tenant.
-
-Variables read by the current code that are removed in milestone M1: `KAFKA_BOOTSTRAP_SERVERS`, `CASSANDRA_CONTACT_POINTS`, `CASSANDRA_KEYSPACE`,
-`CASSANDRA_DATACENTER`, `SCYLLADB_CONTACT_POINTS`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`,
-`POSTGRES_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `POSTHOG_ENABLED`, `POSTHOG_API_KEY`, `POSTHOG_HOST`.
 
 ## Operational conventions
 

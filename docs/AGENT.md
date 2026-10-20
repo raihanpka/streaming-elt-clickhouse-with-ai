@@ -17,7 +17,7 @@ is not called once per event.
 
 ## 2. Detector
 
-- Input: `mart_events_1m`, per `(type, source)` series and per supported metric.
+- Input: the gold tables, per `(type, source)` series and per metric in the data contract.
 - Method: robust z-score using median and MAD over a rolling window, evaluated every `DETECT_INTERVAL_SECONDS`.
 - Output: a candidate with metric, dimension, window, and score.
 - Candidates below the threshold are dropped. Candidates that repeat an open finding are suppressed.
@@ -57,7 +57,7 @@ assistants such as Tableau Pulse.
 |---|---|
 | Model writes or drops data | ClickHouse user `agent_reader` has `readonly=1`. A test asserts failure. |
 | Runaway queries | `max_execution_time`, `max_rows_to_read`, `max_result_rows`, and a quota on the user. |
-| Reading raw or other tables | Grants only on `events` and `mart_*`. |
+| Reading bronze or other tables | Grants only on silver `events` and the gold database. |
 | Prompt injection through event text | Event content is quoted as data. No tools can act outside ClickHouse reads. A hostile-payload test exists. |
 | Cost abuse on the public demo | Detector-triggered runs, per-run budget, per-token rate limit, daily spend cap. |
 | Leaking credentials | The model never sees database credentials. Keys are read from the environment by the process. |

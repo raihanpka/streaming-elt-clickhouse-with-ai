@@ -1,37 +1,104 @@
 # Data
 
-The ClickHouse warehouse model, how data is delivered into it, and the public datasets used to demonstrate it. SQL
-lives in `infra/clickhouse/` as numbered files. Column lists here are the design, and the final DDL is tested in
-milestone M1. Any difference is recorded in [DECISIONS.md](DECISIONS.md).
+The ClickHouse warehouse, how data moves through it, the data contract that describes it, and the public datasets used to
+demonstrate it.
 
-## Layers
+## Warehouse layers
 
-| Layer | Name | Contents | Written by | Read by |
-|---|---|---|---|---|
-| Bronze | `raw` | Exactly what the ingest API stored, one row per event | `bromo-app` ingest (`ingest_writer`) | Reprocessing and the silver views |
-| Silver | `events` | Parsed, typed, validated, deduplicated events | Materialized view `events_mv` from `raw` | Agent drill-down, mart builders |
-| Silver | `events_rejected` | Rows that failed parsing or validation, with a reason | Materialized view `events_rejected_mv` from `raw` | Pipeline status, debugging |
-| Gold | `mart_*` | Per-minute aggregates | Materialized views from `events` | API, detector, UI |
-| Output | `agent_findings` | Agent results | `bromo-agent` (findings writer) | `bromo-app` |
+Bromo uses the medallion layout. Data moves through three layers, and each layer is its own ClickHouse database that
+holds several tables. A layer is a stage of quality, not a deployment environment such as dev or prod.
 
-The API and UI read gold. Only the agent and drill-down code read silver. Only reprocessing reads bronze.
+| Layer | Database (default) | What it holds | Tables (default contract) | Written by | Read by |
+|---|---|---|---|---|---|
+| Bronze | `bronze` | Events exactly as the ingest API received them. Nothing is cleaned or interpreted. | `events` | `bromo-app` ingest as `ingest_writer` | The silver views and rebuilds |
+| Silver | `silver` | Events that were parsed, typed, validated, and deduplicated. Rows that failed validation are kept apart with a reason. | `events`, `events_rejected` | Materialized views over bronze | The agent when it drills down, the gold views |
+| Gold | `gold` | Business ready per minute tables built for questions: volumes, sums, percentiles, distinct counts. | One table per entry in the contract, for example `events_1m` | Materialized views over silver | The API, the detector, the UI |
+
+### What bronze is
+
+Bronze is the landing zone. It stores the event JSON byte for byte, with the request id and the time it was stored. It
+never changes and it keeps its data for a short time. Because nothing is interpreted there, a bug in the silver or gold
+logic can never lose data: fix the logic, then rebuild silver and gold from bronze.
+
+### What silver is
+
+Silver is the clean, trustworthy copy. The event JSON is parsed into typed columns (the fields you promote in the data
+contract plus a map for everything else), duplicates with the same key collapse on merge, and rows that fail validation
+go to `silver.events_rejected` with a reason such as `invalid_json`, `missing_id`, or `bad_time`. Nothing is dropped
+silently.
+
+### What gold is
+
+Gold is shaped for use. Each gold table is a per minute rollup over silver with the dimensions and measures you declare
+in the contract, so dashboards and the detector read a few thousand rows instead of every event. Read counters with
+`sum()` and aggregate states with the `-Merge` functions.
+
+Rule: the API and UI read gold. The agent reads gold and, for drill down, silver. Only rebuilds read bronze.
+
+## The data contract
+
+`config/data-contract.yml` is the one file you edit to adapt Bromo to your own data. It is the single source for:
+
+| Part of the contract | What it controls |
+|---|---|
+| `layers` | The three database names, for example `shop_bronze`, `shop_silver`, `shop_gold` |
+| `retentionDays` | How long each table group keeps data |
+| `event` | CloudEvents rules: type pattern, id and source length, future time tolerance |
+| `fields` | Which keys of the event `data` become typed silver columns, with type, nullability, and a description |
+| `goldTables` | The gold tables: dimensions to group by and numeric measures to aggregate |
+| `metrics` | The metrics the API exposes and the agent is told about |
+| `intake.plainJson` | Optional mapping to accept JSON that is not CloudEvents |
+| `sample` | A valid example event that the tests send |
+
+Descriptions in the contract become ClickHouse column comments. The AI agent reads comments as documentation, so write
+them for someone who does not know your data.
+
+Change workflow:
+
+```bash
+$EDITOR config/data-contract.yml
+./gradlew :bromo-app:generateWarehouseSql     # rewrites infra/clickhouse/00*_*.sql and tests/contract-examples.sh
+./gradlew build                                # validator, parser, and generator tests follow the new contract
+infra/clickhouse/tests/run.sh                  # starts a throwaway ClickHouse and checks all three layers
+```
+
+Generated files carry a header and are never edited by hand. A unit test fails when they are out of date. To test a
+different contract without touching the committed one, run `CONTRACT_FILE=my.yml infra/clickhouse/tests/run.sh`.
+
+What follows the contract automatically:
+
+- Ingest validation of the envelope rules and of the types of promoted fields.
+- The tables, views, comments, retention, and grants of all three layers.
+- The tests: they build events from `sample` and check every promoted field, so they work for any contract.
+
+Existing ClickHouse: set `layers` to your databases, keep the generated SQL as a reference, and point
+`CLICKHOUSE_HOST` and `CLICKHOUSE_HTTP_PORT` at your server. The ingest API only needs `INSERT` on the bronze table.
+
+Extension points, each marked `CUSTOMIZE` in the code:
+
+| To change | Edit |
+|---|---|
+| Where accepted events are stored | Provide your own `EventSink` bean (`bromo-app/.../ingest/EventSink.java`) |
+| Accept another input format | Add a case in `CloudEventParser.parse` that builds the same CloudEvent shaped tree |
+| Accept JSON that is not CloudEvents | `intake.plainJson` in the contract, no code |
+| A new column type or aggregate | `FieldType` and `WarehouseSqlGenerator` |
+| An extra validation rule | A method in `EventValidator` |
 
 ## Conventions
 
-- Names are `snake_case`. Marts are `mart_{subject}_{grain}` (`mart_events_1m`). Materialized views end in `_mv`.
+- Names are `snake_case`. Materialized views end in `_mv`. Gold tables are named by the contract, for example
+  `events_1m`.
 - All timestamps are UTC: `DateTime64(3, 'UTC')`.
-- Every table has a `TTL`, a `COMMENT`, and a documented `ORDER BY` that matches the queries it serves.
-- Low-cardinality text uses `LowCardinality(String)`. The partition key is monthly, never finer.
-- SQL files are numbered and idempotent. An applied file is never edited, add a new one.
-- Changes are additive. A breaking change creates a new table or topic version (`events_v2`, `raw.events.v2`).
-- Every column carries a `COMMENT`. The `mcp-clickhouse` tools expose comments to the agent, and ClickHouse names table
-  comments as the main defense against wrong SQL. Comments are part of the contract.
+- Every table has a `TTL`, a `COMMENT`, and an `ORDER BY` that matches the queries it serves.
+- Low cardinality text uses `LowCardinality(String)`. The partition key is monthly, never finer.
+- SQL files are generated and idempotent. Changes are additive. A breaking change creates a new table version.
 
 ## Tables
 
-Retention values are starting points, adjusted after measurement.
+The columns below are what the default contract generates. Your contract changes the promoted columns and the gold
+tables. Retention values are the contract defaults.
 
-### `raw` (bronze)
+### `bronze.events`
 
 | Column | Type |
 |---|---|
@@ -39,11 +106,11 @@ Retention values are starting points, adjusted after measurement.
 | `payload` | String, the event JSON unmodified |
 | `ingested_at` | DateTime64(3, 'UTC'), default `now64(3)` |
 
-MergeTree, order by `(ingested_at, request_id)`, partition by `toYYYYMM(ingested_at)`, TTL 30 days. The ingest API
-writes with asynchronous inserts (`async_insert=1`, `wait_for_async_insert=1`) so a response means the data is
-flushed. `async_insert_deduplicate=1` makes a retried identical batch a no-op.
+MergeTree, order by `(ingested_at, request_id)`, partition by `toYYYYMM(ingested_at)`. The ingest API writes with
+asynchronous inserts (`async_insert=1`, `wait_for_async_insert=1`) so a response means the data is flushed.
+`async_insert_deduplicate=1` makes a retried identical batch a no-op.
 
-### `events` (silver)
+### `silver.events`
 
 | Column | Type | Note |
 |---|---|---|
@@ -51,50 +118,47 @@ flushed. `async_insert_deduplicate=1` makes a retried identical batch a no-op.
 | `source` | LowCardinality(String) | |
 | `type` | LowCardinality(String) | |
 | `time` | DateTime64(3, 'UTC') | Event time from the producer |
-| `ingested_at` | DateTime64(3, 'UTC') | Carried over from `raw` |
+| `ingested_at` | DateTime64(3, 'UTC') | Carried over from bronze |
 | `subject` | String | Optional |
-| `amount` | Nullable(Float64) | `Nullable` is deliberate: an event without an amount must not count as zero in averages |
-| `label` | LowCardinality(String) | For example `fraud` or `ok`, empty when absent |
-| `attrs` | Map(String, String) | Remaining payload. The native `JSON` type is used only if stable in the pinned version. |
+| promoted fields | From the contract | For example `amount Nullable(Float64)` and `label LowCardinality(String)` |
+| `attrs` | Map(String, String) | Every other key of `data` as text |
 
-ReplacingMergeTree, order by `(type, source, toStartOfMinute(time), event_id)`, partition by `toYYYYMM(time)`, TTL 90
-days. Rows with the same key collapse on merge. Typed hot columns keep common filters fast while events stay
-schema-agnostic. Promoting an attribute to a column is an additive change.
+ReplacingMergeTree, order by `(type, source, toStartOfMinute(time), event_id)`, partition by `toYYYYMM(time)`. Rows with
+the same key collapse on merge. Rows whose event time is already older than the TTL are dropped at insert, which is why
+the API rejects events older than the retention.
 
-### `events_rejected` (silver)
+### `silver.events_rejected`
 
-`request_id`, `reason` (`invalid_json`, `missing_id`, `bad_time`, and so on), `payload`, `ingested_at`. TTL 30 days.
-Two materialized views read `raw` with complementary predicates: rows that pass validation go to `events`, the rest go
-to `events_rejected` with a computed `reason`. The API already rejects invalid events with `400`, so this is a second
-line of defense.
+`request_id`, `reason`, `payload`, `ingested_at`. Two materialized views read bronze with complementary predicates: rows
+that pass validation go to `silver.events`, the rest go here with a computed `reason`. The API already rejects invalid
+events with `400`, so this is a second line of defense.
 
-### `mart_events_1m` (gold)
+### Gold tables
 
-Per `(type, source, minute)`: count, sum of `amount`, quantile states of `amount`, unique-subject state, count by
-`label`. AggregatingMergeTree fed by a materialized view from `events`, order by `(type, source, minute)`, TTL 365
-days, read with the `-Merge` combinators. Add another mart only when an endpoint needs a different key. Cloudflare's
-per-breakdown minutely views are the pattern: one view per query shape.
+One AggregatingMergeTree table per `goldTables` entry, fed by a materialized view over `silver.events`. Columns are
+`minute`, `type`, `source`, the declared dimensions, `events` (count), one column per measure function (`<field>_sum`,
+`<field>_min`, `<field>_max`, `<field>_p95_state`), and `subjects_state` for distinct subjects. Order by `(type, source,
+dimensions, minute)`. Add another entry when an endpoint needs a different grouping. Cloudflare's per breakdown minutely
+views are the pattern: one view per query shape.
 
-### `agent_findings` (output)
+### Agent findings
 
-`finding_id` (UUIDv7 stored as UUID), `created_at`, `kind`, `metric`, `window_start`, `window_end`,
-`dimension_name`, `dimension_value`, `severity`, `confidence`, `summary`, `evidence_sql` (Array(String)), `status`,
-`model`, `tokens`, `cost_usd`. Enum-like columns are `LowCardinality(String)` holding the same lowercase values the
-API returns.
+`agent_findings` is added with the agent: `finding_id`, `created_at`, `kind`, `metric`, `window_start`, `window_end`,
+`dimension_name`, `dimension_value`, `severity`, `confidence`, `summary`, `evidence_sql`, `status`, `model`, `tokens`,
+`cost_usd`.
 
 ## Users and grants
 
 | User | Used by | Rights |
 |---|---|---|
-| `ingest_writer` | `bromo-app` ingest | `INSERT` on `raw` only |
-| `api_reader` | `bromo-app` read API | `SELECT` on `mart_*` and `agent_findings`, row and time limits |
-| `agent_reader` | `bromo-agent` | `readonly=1`, `SELECT` on `events` and `mart_*`, `max_execution_time`, `max_rows_to_read`, `max_result_rows`, quota |
+| `ingest_writer` | `bromo-app` ingest | `INSERT` on the bronze table only |
+| `api_reader` | `bromo-app` read API | `SELECT` on the gold database, row and time limits |
+| `agent_reader` | `bromo-agent` | `readonly=1`, `SELECT` on silver `events` and the gold database, `max_execution_time`, `max_rows_to_read`, `max_result_rows`, quota |
 | `findings_writer` | `bromo-agent` | `INSERT` on `agent_findings` only |
 
-`agent_reader` has no grant on `raw`, `events_rejected`, or system tables. A test proves that `INSERT`, `DROP`, and
-`ALTER` fail for it. Materialized views run with the rights of the inserting user on the target tables, so the grants
-for `ingest_writer` must cover the target tables of the views or the views use `SQL SECURITY DEFINER`. Verify this on
-the pinned version in M1.
+`agent_reader` has no grant on bronze, `events_rejected`, or system tables. A test proves that `INSERT`, `DROP`, and
+`ALTER` fail for it. The materialized views are created with `DEFINER = admin SQL SECURITY DEFINER`, so `ingest_writer`
+needs only `INSERT` on bronze. Both behaviors are checked on ClickHouse 26.3 by `infra/clickhouse/tests/t_schema.sh`.
 
 ## Delivery guarantees
 
@@ -102,24 +166,24 @@ the pinned version in M1.
 |---|---|
 | Delivery | The API acknowledges after the flush. Clients retry on `503`, so delivery is at least once. |
 | Ordering | Not guaranteed. Queries use event time. |
-| Duplicates | `events` collapses duplicates by key on merge. Marts can over-count by the duplicate rate until a rebuild. The rate is measured and published. A retried identical batch is deduplicated by `async_insert_deduplicate`. |
-| Bad data | Goes to `events_rejected` with a reason. Nothing is dropped silently. |
+| Duplicates | Silver collapses duplicates by key on merge. Gold can over-count by the duplicate rate until a rebuild. The rate is measured and published. A retried identical batch is deduplicated by `async_insert_deduplicate`. |
+| Bad data | Goes to `silver.events_rejected` with a reason. Nothing is dropped silently. |
 | Backpressure | ClickHouse unavailable: ingest returns `503` and there is no durable buffer. A client that stops retrying loses its events. |
-| Replay | Source data is replayed through the ingest API. Silver and gold are rebuilt from `raw` with `infra/clickhouse/reprocess.sql`. |
+| Replay | Source data is replayed through the ingest API. Silver and gold are rebuilt from bronze with a documented command. |
 
 ## Reconciliation
 
-Each stage is comparable with the previous one. These checks live in `infra/clickhouse/tests/` and appear in
+Each layer is comparable with the one before it. These checks live in `infra/clickhouse/tests/` and appear in
 `GET /api/v1/pipeline/status`:
 
 | Check | Meaning |
 |---|---|
-| Rows in `raw` versus rows in `events` plus `events_rejected` | Every row is modeled or rejected |
-| Sum in `mart_events_1m` versus `events` for the same window | Marts match silver |
-| Replayer events sent versus rows in `events` after merge | End to end |
+| Rows in bronze versus rows in silver plus rejected | Every bronze row is modeled or rejected |
+| Sum of `events` in a gold table versus silver for the same window | Gold matches silver |
+| Replayer events sent versus rows in silver after merge | End to end |
 
-`reprocess.sql` truncates silver and gold and rebuilds them from `raw`. It is tested: totals before and after must
-match. Backfill never bypasses the ingest API.
+A rebuild truncates silver and gold and recreates them from bronze. Totals before and after must match. Backfill never
+bypasses the ingest API.
 
 ## Datasets
 

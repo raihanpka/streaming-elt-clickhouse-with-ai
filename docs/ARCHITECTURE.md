@@ -3,18 +3,16 @@
 Bromo is a streaming ELT pipeline into ClickHouse with a Java API and UI on top and a Python AI agent that
 investigates anomalies. This document is the canonical architecture reference.
 
-> **Status: target architecture.** The code is catching up with this document, see the
-> [roadmap](../README.md#roadmap). Until milestone M1 is done, `bromo-app` still contains Kafka, Cassandra,
-> PostgreSQL, and Redis adapters that are not part of this architecture. Where this document and the code disagree,
-> this document is the target.
+> **Status:** milestone M1 is implemented: ingest, the three warehouse layers, the data contract, and the replayer.
+> The read API, UI, agent, and chat are the target of later milestones, see the [roadmap](../README.md#roadmap).
 
 ## 1. Principles
 
 1. **Pipeline first.** Raw events land in the warehouse, are cleaned and modeled inside it, and only then feed
    analytics and the agent.
-2. **One datastore.** ClickHouse stores raw data, modeled data, rollups, and agent findings.
-3. **ELT, not ETL.** Load first, transform inside the warehouse with materialized views.
-4. **Vertical slices.** The Java backend is organized by feature. Slices do not import each other.
+2. **One datastore.** ClickHouse holds the bronze, silver, and gold layers and the agent findings.
+3. **ELT, not ETL.** Load first, transform inside the warehouse with materialized views, layer by layer.
+4. **Feature modules.** The Java backend is organized by feature. Modules do not import each other.
 5. **Abstraction at real boundaries only.** An interface needs two real implementations or a process boundary.
 6. **Safety in the database.** Read-only access for the agent is enforced by ClickHouse, not by a prompt.
 7. **Measured claims.** Every performance or accuracy statement links to a reproducible benchmark.
@@ -37,9 +35,9 @@ flowchart LR
     end
 
     subgraph WH["ClickHouse"]
-        RAW[raw]
-        EV[events]
-        MA[mart_*]
+        BR[bronze]
+        SI[silver]
+        GO[gold]
         FD[agent_findings]
     end
 
@@ -49,13 +47,13 @@ flowchart LR
 
     R --> IN
     C --> IN
-    IN --> RAW
-    RAW --> EV --> MA
-    PI --> MA
-    ME --> MA
+    IN --> BR
+    BR --> SI --> GO
+    PI --> GO
+    ME --> GO
     FI --> FD
-    AG -->|read only| EV
-    AG -->|read only| MA
+    AG -->|read only| SI
+    AG -->|read only| GO
     AG -->|findings writer| FD
     AG --> LLM
     CH -->|gRPC| AG
@@ -93,17 +91,17 @@ sequenceDiagram
 
     S->>A: POST /api/v1/events (CloudEvents JSON, Bearer key)
     A->>A: authenticate, validate, check size
-    A->>W: INSERT into raw (async insert, wait for flush)
-    W->>W: materialized view into events, or events_rejected
-    W->>W: materialized view into mart_*
+    A->>W: INSERT into bronze (async insert, wait for flush)
+    W->>W: materialized view into silver, or silver rejected
+    W->>W: materialized view into gold
     A-->>S: 200 OK { accepted }
 ```
 
-`200` means the events are stored in `raw` and the materialized views have run for that insert. If ClickHouse is unavailable the response is `503` and the client retries. Query latency after the flush is measured and published in [benchmarks/](../benchmarks/README.md).
+`200` means the events are stored in bronze and the materialized views have run for that insert. If ClickHouse is unavailable the response is `503` and the client retries. Query latency after the flush is measured and published in [benchmarks/](../benchmarks/README.md).
 
 ### 4.2 Detection and findings
 
-1. The detector queries `mart_events_1m` every `DETECT_INTERVAL_SECONDS` and scores each series with a robust z-score (median and MAD).
+1. The detector queries a gold table every `DETECT_INTERVAL_SECONDS` and scores each series with a robust z-score (median and MAD).
 2. A candidate above the threshold starts one agent run with a hard budget.
 3. The agent investigates with read-only SQL and returns a structured finding.
 4. The finding is written to `agent_findings` by a separate write-only user.
@@ -116,7 +114,7 @@ sequenceDiagram
 3. `bromo-app` calls the `Chat` gRPC method on `bromo-agent` and streams events back as Server-Sent Events.
 4. The answer includes the SQL that was run.
 
-## 5. Java backend: vertical slices
+## 5. Java backend: feature modules
 
 ```
 bromo-app/src/main/java/io/bromo/
@@ -131,14 +129,14 @@ bromo-app/src/main/java/io/bromo/
 
 Rules (checked by ArchUnit):
 
-- A slice does not import another slice.
-- `shared` does not import any slice.
-- Only `bootstrap` knows every slice.
+- A module does not import another module.
+- `shared` does not import any module.
+- Only `bootstrap` knows every module.
 - Controllers contain no SQL. Services and queries contain no HTTP types.
 
 The only interface by design is `AgentClient`, the process boundary to the Python agent, which tests replace with a fake. Everything else is a concrete class.
 
-There is no separate `bromo-core` module and no `domain/application/infrastructure/web` layering. A single deployable does not need them. The current code is reshaped in milestone M1.
+There is no separate `bromo-core` module and no `domain/application/infrastructure/web` layering. A single deployable does not need them.
 
 ## 6. Python agent
 
@@ -157,7 +155,9 @@ Details in [AGENT.md](AGENT.md).
 
 ## 7. Warehouse
 
-Three layers, all inside ClickHouse: `raw` (bronze), `events` (silver), `mart_*` (gold). See [DATA.md](DATA.md).
+Three layers, all inside ClickHouse: bronze (events as received), silver (parsed, typed, validated), gold (per minute
+rollups). Each layer is its own database with several tables. What each layer is, and the data contract that
+describes them, are in [DATA.md](DATA.md).
 
 ## 8. Delivery guarantees
 
@@ -166,17 +166,17 @@ Three layers, all inside ClickHouse: `raw` (bronze), `events` (silver), `mart_*`
 | Acknowledgement | `200` is returned only after the insert is flushed to ClickHouse. |
 | Retries | Clients retry on `503` and on network errors. Retries are safe, duplicates collapse. |
 | Ordering | Not guaranteed. Event time is stored and queries use event time. |
-| Duplicates | `events` collapses duplicates by key on merge. Marts may over-count by the duplicate rate until a rebuild. The rate is measured and published. |
-| Bad data | Rows that fail parsing or validation go to `events_rejected` with a reason. Nothing is dropped silently. |
+| Duplicates | Silver collapses duplicates by key on merge. Gold may over-count by the duplicate rate until a rebuild. The rate is measured and published. |
+| Bad data | Rows that fail parsing or validation go to the silver rejected table with a reason. Nothing is dropped silently. |
 | Backpressure | If ClickHouse is unavailable, ingest returns `503`. There is no durable buffer, a client that stops retrying loses its events. |
-| Replay | Silver and gold are rebuilt from `raw` with a documented command. Source data can be replayed through the ingest API. |
+| Replay | Silver and gold are rebuilt from bronze with a documented command. Source data can be replayed through the ingest API. |
 
 ## 9. Failure modes
 
 | Failure | Effect | Handling |
 |---|---|---|
 | ClickHouse down | Ingest and read API return `503` | Clients retry with backoff. Readiness fails. |
-| Malformed event | Rejected with `400` at the API, or stored in `events_rejected` if it passes the API check | Reason is recorded. Reject ratio is shown in pipeline status. |
+| Malformed event | Rejected with `400` at the API, or stored in the silver rejected table if it passes the API check | Reason is recorded. Reject ratio is shown in pipeline status. |
 | LLM provider down | No new findings, chat returns an error | The detector still scores and stores candidates. |
 | Budget exhausted | The run ends with a `budget_exhausted` result | The finding is marked incomplete and never hangs. |
 | Spend cap reached | Chat is refused until the next day | The UI shows a clear message. |
@@ -186,14 +186,14 @@ Three layers, all inside ClickHouse: `raw` (bronze), `events` (silver), `mart_*`
 Summary here, details in [SECURITY.md](../SECURITY.md) and [AGENT.md](AGENT.md).
 
 - Ingest: bearer key. Chat: bearer token, rate limit, spend cap.
-- ClickHouse users: `ingest_writer` (insert on `raw` only), `api_reader` (Java reads), `agent_reader` (Python, read
+- ClickHouse users: `ingest_writer` (insert on bronze only), `api_reader` (Java reads), `agent_reader` (Python, read
   only, limited), `findings_writer` (Python).
 - The browser never sends SQL.
 - Event content reaching the LLM is treated as data.
 
 ## 11. Performance targets
 
-No benchmarks have been run. The first goals are set before measurement and revised after it:
+Goals are set before measurement and revised after it. Baselines measured so far are in [benchmarks/](../benchmarks/README.md):
 
 | Goal | Target on the reference VPS (12 GB RAM, 2 CPU, arm64) |
 |---|---|
@@ -214,7 +214,14 @@ Results and commands go to [benchmarks/](../benchmarks/README.md).
 | Quality | Spotless (google-java-format), ArchUnit, JUnit 5, Testcontainers, ruff, mypy, pytest |
 | Observability | Micrometer, Prometheus endpoint, structured JSON logs |
 
-## 13. Deliberately not in scope (for now)
+## 13. Customizing
+
+Bromo is meant to be adapted to your data without rewriting code. `config/data-contract.yml` is the single source for the
+event rules, the typed fields, the three layers, the gold tables, and the metrics. The SQL, the validation, the metric
+list, the agent's context, and the tests are all derived from it. Extension points for storage and input formats are
+marked `CUSTOMIZE` in the code. The workflow and the full list are in [DATA.md](DATA.md#the-data-contract).
+
+## 14. Deliberately not in scope (for now)
 
 A message broker, multi-shard clusters, Flink, Spark, Cassandra, PostgreSQL, Redis, Helm, a BI
 tool, chat channel integrations beyond the web UI, agent actions that change data, and per-event LLM calls. Reasons are in [DECISIONS.md](DECISIONS.md).

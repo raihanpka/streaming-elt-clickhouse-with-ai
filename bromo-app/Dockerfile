@@ -12,7 +12,6 @@ WORKDIR /workspace
 # Copy Gradle wrapper and build descriptors first to leverage Docker layer cache
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle/ gradle/
-COPY bromo-core/ bromo-core/
 COPY bromo-app/ bromo-app/
 
 # Build the executable jar (skip tests for image; run tests in CI separately)
@@ -67,7 +66,6 @@ FROM ghcr.io/graalvm/graalvm-ce:jdk-25.0.2 AS native
 WORKDIR /workspace
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle/ gradle/
-COPY bromo-core/ bromo-core/
 COPY bromo-app/ bromo-app/
 
 RUN --mount=type=cache,target=/root/.gradle \
