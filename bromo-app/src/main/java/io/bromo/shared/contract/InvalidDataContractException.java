@@ -9,7 +9,7 @@ public class InvalidDataContractException extends RuntimeException {
 
   /** Creates the exception from the list of problems. */
   public InvalidDataContractException(List<String> problems) {
-    super("Invalid data contract:\n  - " + String.join("\n  - ", problems));
+    super("Invalid data contract:\n  * " + String.join("\n  * ", problems));
     this.problems = List.copyOf(problems);
   }
 

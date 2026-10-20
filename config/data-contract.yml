@@ -1,10 +1,10 @@
 # Bromo data contract. This is the one file you edit to adapt Bromo to your own events.
 #
 # What reads it:
-#   - the ingest API: validation rules and the typed fields it checks
-#   - the SQL generator: tables, views, rollups, and column comments in ClickHouse
-#   - the metrics API and the AI agent: metric definitions and descriptions
-#   - the tests: the sample event at the bottom
+#   the ingest API: validation rules and the typed fields it checks
+#   the SQL generator: tables, views, rollups, and column comments in ClickHouse
+#   the metrics API and the AI agent: metric definitions and descriptions
+#   the tests: the sample event at the bottom
 #
 # After editing, regenerate the warehouse SQL and run the tests:
 #   ./gradlew :bromo-app:generateWarehouseSql
