@@ -25,6 +25,8 @@ and writes them to `replay-summary.json`.
 - **Time is rebased to the wall clock.** The first event gets the current time and the spacing of the rest is divided by
   `--speed`. Events are never stamped in the future. The original value is kept in `data.originalTime`.
 - **Ids are stable.** The id depends only on the row, so a re-run sends the same ids and the warehouse deduplicates.
+- **A re-run is a new run.** The ids repeat, but event times are rebased again, so silver treats the events as new
+  (its key includes the event minute). Only a retried batch, which carries identical times, collapses.
 - **Retries are safe.** A `503`, `429`, or connection error is retried with backoff. A `400` stops the run.
 - **Nothing is committed.** Datasets are downloaded by you. Check each license first.
 
