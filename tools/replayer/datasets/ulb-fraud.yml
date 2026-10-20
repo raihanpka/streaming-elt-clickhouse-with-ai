@@ -1,0 +1,20 @@
+# Mapping for the ULB credit card fraud dataset (Kaggle: mlg-ulb/creditcardfraud).
+#   284,807 real European card transactions over two days, 492 labeled fraud.
+#   Columns: Time (seconds since the first transaction), V1..V28 (anonymized PCA features), Amount, Class.
+# License and terms: check https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud before publishing anything
+# derived from it. The file is never committed. Download it yourself and pass it with --file.
+#
+# How to adapt: copy this file, set time.column and time.unit for your CSV, then list the keys of the event data.
+# The keys under event.data must match the "path" values of the fields in config/data-contract.yml.
+name: ulb-fraud
+license: https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+time:
+  column: Time
+  unit: seconds           # seconds | epoch_seconds | epoch_millis | iso8601
+event:
+  type: com.example.payment.v1
+  source: card-replay
+  id: "ulb-{row}"         # {row} is the row number, {Column} inserts a column value
+  data:
+    amount: { column: Amount, cast: float }
+    label: { column: Class, cast: int, values: { "0": ok, "1": fraud } }
