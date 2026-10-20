@@ -58,7 +58,8 @@ flushed. `async_insert_deduplicate=1` makes a retried identical batch a no-op.
 | `attrs` | Map(String, String) | Remaining payload. The native `JSON` type is used only if stable in the pinned version. |
 
 ReplacingMergeTree, order by `(type, source, toStartOfMinute(time), event_id)`, partition by `toYYYYMM(time)`, TTL 90
-days. Rows with the same key collapse on merge. Typed hot columns keep common filters fast while events stay
+days. Rows with the same key collapse on merge. Rows whose event time is already older than the TTL are dropped at insert,
+which is why the API rejects events older than the retention. Typed hot columns keep common filters fast while events stay
 schema-agnostic. Promoting an attribute to a column is an additive change.
 
 ### `events_rejected` (silver)
@@ -92,9 +93,8 @@ API returns.
 | `findings_writer` | `bromo-agent` | `INSERT` on `agent_findings` only |
 
 `agent_reader` has no grant on `raw`, `events_rejected`, or system tables. A test proves that `INSERT`, `DROP`, and
-`ALTER` fail for it. Materialized views run with the rights of the inserting user on the target tables, so the grants
-for `ingest_writer` must cover the target tables of the views or the views use `SQL SECURITY DEFINER`. Verify this on
-the pinned version in M1.
+`ALTER` fail for it. The materialized views are created with `DEFINER = admin SQL SECURITY DEFINER`, so `ingest_writer`
+needs only `INSERT` on `raw`. Both behaviors are checked on ClickHouse 26.3 by `infra/clickhouse/tests/t_schema.sh`.
 
 ## Delivery guarantees
 
