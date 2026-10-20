@@ -48,8 +48,8 @@ flowchart LR
     A --> U[Web UI and chat]
 ```
 
-- **Java (`bromo-app`)** owns ingest, the read API, auth, rate limits, the spend cap, and the UI. Organized in vertical
-  slices.
+- **Java (`bromo-app`)** owns ingest, the read API, auth, rate limits, the spend cap, and the UI. Organized in feature
+  modules.
 - **Python (`bromo-agent`)** owns detection and the agent. It is internal and never exposed.
 - **ClickHouse** is the only datastore. Transformation is ELT with materialized views.
 
@@ -121,7 +121,7 @@ docs/             Architecture, data, agent, API, operations, decisions
 
 | Document | About |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows, vertical slices, failure modes |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows, feature modules, failure modes |
 | [docs/DATA.md](docs/DATA.md) | Warehouse layers, tables, users, datasets |
 | [docs/AGENT.md](docs/AGENT.md) | Detector, agent, safety, evaluation |
 | [docs/API.md](docs/API.md) | HTTP, event, and gRPC contracts |
@@ -133,7 +133,7 @@ docs/             Architecture, data, agent, API, operations, decisions
 
 | Milestone | Delivers |
 |---|---|
-| M1 Pipeline | Single-node ClickHouse, `raw` / `events` / `mart_*` layers with rejects and reconciliation, slimmed Java ingest in vertical slices, dataset replayer |
+| M1 Pipeline | Single-node ClickHouse, `raw` / `events` / `mart_*` layers with rejects and reconciliation, slimmed Java ingest in feature modules, dataset replayer |
 | M2 Analytics | Pipeline status and metrics endpoints, UI views for pipeline health and analytics, synthetic event generator with anomaly manifest |
 | M3 Agent | Read-only agent user, detector, agent loop, findings, chat over gRPC with limits |
 | M4 Evidence and demo | Evaluation harness, benchmarks, public single-VPS deployment |

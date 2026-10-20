@@ -51,8 +51,8 @@ Example: `feat(ingest): reject events above the size limit`
 
 ### Style
 
-- Java: Google Java Style via Spotless (`./gradlew spotlessApply`). Vertical slices. See the rules in
-  [AGENTS.md](AGENTS.md#java-architecture-vertical-slices).
+- Java: Google Java Style via Spotless (`./gradlew spotlessApply`). Feature modules. See the rules in
+  [AGENTS.md](AGENTS.md#java-architecture-feature-modules).
 - Python: `ruff` for lint and format, type hints, `mypy`.
 - Write in English. Do not use dashes as punctuation (em dash, en dash, spaced hyphen) or emojis anywhere.
 - One short intent comment per function or method.

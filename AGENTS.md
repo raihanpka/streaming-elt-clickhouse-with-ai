@@ -27,7 +27,7 @@ Non-negotiable. They apply to every edit.
   docstring), terse, for example `/** Validates the event and writes it to ClickHouse. */`. Test methods are exempt,
   name them after the behavior.
 - Commits are single-line `type(scope): summary`, no body, no bullets. Types: `feat`, `fix`, `refactor`, `perf`,
-  `test`, `docs`, `build`, `ci`, `chore`. Scope is a slice or area: `app`, `ingest`, `chat`, `agent`, `warehouse`, `replayer`,
+  `test`, `docs`, `build`, `ci`, `chore`. Scope is a module or area: `app`, `ingest`, `chat`, `agent`, `warehouse`, `replayer`,
   `ui`, `infra`, `docs`.
 - Commit only when the human asks in the current message. Never push. Run the focused build or test first and
   commit only when it is green.
@@ -49,9 +49,9 @@ benchmarks/        Reproducible measurements with exact commands.
 docs/              Architecture, data, agent, API, operations, decisions.
 ```
 
-## Java Architecture: Vertical Slices
+## Java Architecture: Feature Modules
 
-Package by feature, not by layer. Each slice owns everything it needs end to end.
+Package by feature, not by layer. Each module owns everything it needs end to end.
 
 ```
 io.bromo
@@ -66,9 +66,9 @@ io.bromo
 
 Rules, enforced by ArchUnit in the build:
 
-- A slice never imports another slice. If two slices need the same thing, move the smallest piece to `shared`.
-- `shared` never imports a slice. `bootstrap` is the only package allowed to know all slices.
-- Inside a slice: controller calls service, service calls query or publisher. Controllers stay thin: parse, validate,
+- A module never imports another module. If two modules need the same thing, move the smallest piece to `shared`.
+- `shared` never imports a module. `bootstrap` is the only package allowed to know all modules.
+- Inside a module: controller calls service, service calls query or publisher. Controllers stay thin: parse, validate,
   call, map. No SQL in controllers. No HTTP types in services.
 - Records for DTOs and value types. Constructor injection only. No Lombok, no field injection, no wildcard imports.
 - Use the library directly (the ClickHouse client, the gRPC stub). Do not wrap a library in a class that adds
@@ -158,7 +158,7 @@ Correctness:
 
 ## Testing
 
-- Java: JUnit 5 for logic, Testcontainers (ClickHouse) for integration, ArchUnit for slice rules.
+- Java: JUnit 5 for logic, Testcontainers (ClickHouse) for integration, ArchUnit for module rules.
 - Python: `pytest`, recorded LLM fixtures for the agent, no live model calls in unit tests.
 - SQL: tests in `infra/clickhouse/tests/` assert reconciliation and grants.
 - Fixtures are deterministic and committed when small. Datasets are downloaded by script, never committed.
@@ -182,7 +182,7 @@ Some commands exist only after the matching [roadmap](README.md#roadmap) milesto
 | File | Purpose |
 |---|---|
 | [README.md](README.md) | What Bromo is, quick start |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows, slices, failure modes |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows, modules, failure modes |
 | [docs/DATA.md](docs/DATA.md) | Warehouse layers, tables, users, reprocessing, datasets |
 | [docs/AGENT.md](docs/AGENT.md) | Detector, agent loop, safety, evaluation |
 | [docs/API.md](docs/API.md) | HTTP, event, and gRPC contracts, standards followed |
