@@ -192,3 +192,9 @@ helm/charts/
 temp/
 
 # End of https://www.toptal.com/developers/gitignore/api/java,macos,gradle,intellij+all
+
+# Private planning notes (author only)
+tasks/
+
+# Local environment
+.env
