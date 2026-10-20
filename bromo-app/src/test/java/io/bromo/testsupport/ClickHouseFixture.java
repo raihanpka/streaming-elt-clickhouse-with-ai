@@ -1,5 +1,6 @@
 package io.bromo.testsupport;
 
+import io.bromo.shared.contract.DataContract;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -24,6 +25,7 @@ public final class ClickHouseFixture implements AutoCloseable {
   public static final String API_PASSWORD = "api-test-pw";
 
   private final GenericContainer<?> container;
+  private final DataContract contract = TestContract.load();
 
   /** Starts the container with the image pinned in the compose file. */
   public ClickHouseFixture() {
@@ -36,12 +38,27 @@ public final class ClickHouseFixture implements AutoCloseable {
             .withEnv("CLICKHOUSE_INGEST_PASSWORD", INGEST_PASSWORD)
             .withEnv("CLICKHOUSE_API_PASSWORD", API_PASSWORD)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
-    for (String script : new String[] {"001_users.sh", "002_raw.sql", "003_events.sql"}) {
+    for (String script : initScripts()) {
       container.withCopyFileToContainer(
           MountableFile.forHostPath(Path.of("../infra/clickhouse", script), 0755),
           "/docker-entrypoint-initdb.d/" + script);
     }
     container.start();
+  }
+
+  /** The bronze table name from the data contract. */
+  public String bronzeTable() {
+    return contract.bronzeTable();
+  }
+
+  /** The silver table name from the data contract. */
+  public String silverTable() {
+    return contract.silverTable();
+  }
+
+  /** The first gold table name from the data contract. */
+  public String goldTable() {
+    return contract.goldTable(contract.goldTables().get(0));
   }
 
   /** Base URL of the HTTP interface. */
@@ -82,6 +99,19 @@ public final class ClickHouseFixture implements AutoCloseable {
   @Override
   public void close() {
     container.stop();
+  }
+
+  /** The numbered init scripts generated from the data contract. */
+  private static java.util.List<String> initScripts() {
+    try (java.util.stream.Stream<Path> files = Files.list(Path.of("../infra/clickhouse"))) {
+      return files
+          .map(f -> f.getFileName().toString())
+          .filter(n -> n.matches("^[0-9]{3}_.*"))
+          .sorted()
+          .toList();
+    } catch (IOException e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   /** Reads the ClickHouse image tag from the compose file so tests and compose cannot drift. */

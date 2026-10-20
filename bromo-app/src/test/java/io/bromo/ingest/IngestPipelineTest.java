@@ -2,12 +2,15 @@ package io.bromo.ingest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import io.bromo.shared.contract.DataContract;
+import io.bromo.shared.contract.DataContract.FieldSpec;
 import io.bromo.testsupport.ClickHouseFixture;
+import io.bromo.testsupport.TestContract;
+import io.bromo.testsupport.TestEvents;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Instant;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+/** Runs the whole ingest path against a real ClickHouse built from the data contract. */
 @SpringBootTest(
     classes = io.bromo.bootstrap.BromoApplication.class,
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -37,6 +41,8 @@ class IngestPipelineTest {
   @Value("${local.server.port}")
   int port;
 
+  final DataContract contract = TestContract.load();
+
   HttpResponse<String> post(String contentType, String body) throws Exception {
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/events"))
@@ -47,43 +53,71 @@ class IngestPipelineTest {
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
   }
 
-  static String event(String id, double amount) {
-    return "{\"specversion\":\"1.0\",\"id\":\""
-        + id
-        + "\",\"source\":\"it\",\"type\":\"com.example.payment.v1\","
-        + "\"time\":\""
-        + Instant.now().minusSeconds(10)
-        + "\",\"data\":{\"amount\":"
-        + amount
-        + ",\"label\":\"ok\"}}";
+  static String display(Object value) {
+    if (value instanceof Double d && d == Math.rint(d)) {
+      return String.valueOf(d.longValue());
+    }
+    return String.valueOf(value);
   }
 
   @Test
-  void structuredEventIsQueryableRightAfterTheResponse() throws Exception {
-    HttpResponse<String> response = post("application/cloudevents+json", event("struct-1", 42.5));
-    assertEquals(200, response.statusCode());
+  void structuredEventIsQueryableInSilverRightAfterTheResponse() throws Exception {
     assertEquals(
-        "1", clickhouse.query("SELECT count() FROM bromo.events WHERE event_id = 'struct-1'"));
+        200, post("application/cloudevents+json", TestEvents.recent("struct-1")).statusCode());
     assertEquals(
-        "42.5", clickhouse.query("SELECT amount FROM bromo.events WHERE event_id = 'struct-1'"));
+        "1",
+        clickhouse.query(
+            "SELECT count() FROM " + clickhouse.silverTable() + " WHERE event_id = 'struct-1'"));
   }
 
   @Test
-  void batchStoresEveryEvent() throws Exception {
+  void everyPromotedFieldOfTheSampleArrivesTyped() throws Exception {
+    assertEquals(
+        200, post("application/cloudevents+json", TestEvents.recent("typed-1")).statusCode());
+    for (FieldSpec field : contract.fields()) {
+      Object expected = contract.sample().data().get(field.path());
+      if (expected != null) {
+        assertEquals(
+            display(expected),
+            clickhouse.query(
+                "SELECT `"
+                    + field.name()
+                    + "` FROM "
+                    + clickhouse.silverTable()
+                    + " WHERE event_id = 'typed-1'"),
+            field.name());
+      }
+    }
+  }
+
+  @Test
+  void batchStoresEveryEventAndReachesGold() throws Exception {
     String body =
-        "[" + event("batch-1", 1) + "," + event("batch-2", 2) + "," + event("batch-3", 3) + "]";
+        "["
+            + TestEvents.recent("batch-1")
+            + ","
+            + TestEvents.recent("batch-2")
+            + ","
+            + TestEvents.recent("batch-3")
+            + "]";
     assertEquals(200, post("application/cloudevents-batch+json", body).statusCode());
     assertEquals(
-        "3", clickhouse.query("SELECT count() FROM bromo.events WHERE event_id LIKE 'batch-%'"));
+        "3",
+        clickhouse.query(
+            "SELECT count() FROM " + clickhouse.silverTable() + " WHERE event_id LIKE 'batch-%'"));
+    assertEquals(
+        "1", clickhouse.query("SELECT toUInt8(sum(events) >= 3) FROM " + clickhouse.goldTable()));
   }
 
   @Test
-  void retriedBatchLeavesOneRowPerEventAfterMerge() throws Exception {
-    String body = "[" + event("retry-1", 1) + "," + event("retry-2", 2) + "]";
+  void retriedBatchLeavesOneSilverRowPerEventAfterMerge() throws Exception {
+    String body = "[" + TestEvents.recent("retry-1") + "," + TestEvents.recent("retry-2") + "]";
     assertEquals(200, post("application/cloudevents-batch+json", body).statusCode());
     assertEquals(200, post("application/cloudevents-batch+json", body).statusCode());
-    clickhouse.query("OPTIMIZE TABLE bromo.events FINAL");
+    clickhouse.query("OPTIMIZE TABLE " + clickhouse.silverTable() + " FINAL");
     assertEquals(
-        "2", clickhouse.query("SELECT count() FROM bromo.events WHERE event_id LIKE 'retry-%'"));
+        "2",
+        clickhouse.query(
+            "SELECT count() FROM " + clickhouse.silverTable() + " WHERE event_id LIKE 'retry-%'"));
   }
 }

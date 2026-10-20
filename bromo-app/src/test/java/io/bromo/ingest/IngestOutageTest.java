@@ -4,11 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.bromo.testsupport.ClickHouseFixture;
+import io.bromo.testsupport.TestEvents;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Instant;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,10 +45,7 @@ class IngestOutageTest {
   @Test
   void stoppedClickHouseReturnsServiceUnavailableWithRetryAfter() throws Exception {
     clickhouse.stop();
-    String event =
-        "{\"specversion\":\"1.0\",\"id\":\"out-1\",\"source\":\"it\",\"type\":\"a.v1\",\"time\":\""
-            + Instant.now().minusSeconds(5)
-            + "\"}";
+    String event = TestEvents.recent("out-1");
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/events"))
             .header("Content-Type", "application/cloudevents+json")

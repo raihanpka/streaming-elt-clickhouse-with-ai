@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.bromo.testsupport.ClickHouseFixture;
+import io.bromo.testsupport.TestEvents;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -62,12 +63,7 @@ class IngestLatencyTest {
   }
 
   static String event(String id) {
-    return "{\"specversion\":\"1.0\",\"id\":\""
-        + id
-        + "\",\"source\":\"lat\",\"type\":\"com.example.payment.v1\","
-        + "\"time\":\""
-        + Instant.now().minusSeconds(5)
-        + "\",\"data\":{\"amount\":1.5,\"label\":\"ok\"}}";
+    return TestEvents.json(id, Instant.now().minusSeconds(5));
   }
 
   static double percentile(List<Double> sorted, double p) {
@@ -83,7 +79,12 @@ class IngestLatencyTest {
       assertEquals(200, post("application/cloudevents+json", event("single-" + i)).statusCode());
       assertEquals(
           "1",
-          clickhouse.query("SELECT count() FROM bromo.events WHERE event_id = 'single-" + i + "'"));
+          clickhouse.query(
+              "SELECT count() FROM "
+                  + clickhouse.silverTable()
+                  + " WHERE event_id = 'single-"
+                  + i
+                  + "'"));
       single.add((System.nanoTime() - start) / 1e6);
     }
     List<Double> batches = new ArrayList<>();
@@ -99,7 +100,11 @@ class IngestLatencyTest {
       assertEquals(
           String.valueOf(BATCH_SIZE),
           clickhouse.query(
-              "SELECT count() FROM bromo.events WHERE event_id LIKE 'batch-" + b + "-%'"));
+              "SELECT count() FROM "
+                  + clickhouse.silverTable()
+                  + " WHERE event_id LIKE 'batch-"
+                  + b
+                  + "-%'"));
       batches.add((System.nanoTime() - start) / 1e6);
     }
     double batchSeconds = (System.nanoTime() - batchStart) / 1e9;
