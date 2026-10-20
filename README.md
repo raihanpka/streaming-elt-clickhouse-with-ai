@@ -16,8 +16,8 @@ chat.
 make them understandable.*
 
 > **Project status: work in progress.** The code is catching up with the architecture described here (see the
-> [roadmap](#roadmap)). What runs today is the ingest path only. No benchmarks have been run yet, and this README
-> states no performance claims.
+> [roadmap](#roadmap)). What runs today is the ingest API, the three warehouse layers, and the replayer (milestone M1). Measurements
+> so far are single machine baselines in [benchmarks/](benchmarks/README.md), and this README makes no capacity claims.
 
 ## What you will see
 
@@ -90,15 +90,17 @@ contract. See [docs/DATA.md](docs/DATA.md#the-data-contract).
 
 Where a source does not fully apply, [docs/DECISIONS.md](docs/DECISIONS.md#prior-art-and-its-limits) says so.
 
-## Quick start (current ingest path)
+## Quick start
 
-Prerequisites: Docker Engine 25+ and JDK 21+.
+Prerequisites: Docker Engine 25+ (or OrbStack), JDK 21+, Python 3.12+ with `uv` for the replayer.
 
 ```bash
 git clone https://github.com/raihanpka/streaming-elt-clickhouse-with-ai
 cd streaming-elt-clickhouse-with-ai
-docker compose -f infra/docker/docker-compose.yml up -d
-./gradlew :bromo-app:bootRun
+cp .env.example .env            # then fill in the required secrets, for example with: openssl rand -hex 16
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
+set -a; . ./.env; set +a
+./gradlew :bromo-app:bootRun    # API on :8080
 ```
 
 Send an event:
@@ -106,18 +108,14 @@ Send an event:
 ```bash
 curl -X POST http://localhost:8080/api/v1/events \
   -H "Content-Type: application/cloudevents+json" \
-  -d '{
-    "specversion": "1.0",
-    "source": "my-app",
-    "type": "com.example.payment.v1",
-    "id": "evt_001",
-    "time": "2026-06-19T10:30:00Z",
-    "data": { "amount": 42.5 }
-  }'
+  -H "Authorization: Bearer $BROMO_API_KEY" \
+  -d '{"specversion":"1.0","id":"evt_001","source":"my-app","type":"com.example.payment.v1",
+       "time":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","data":{"amount":42.5,"label":"ok"}}'
 ```
 
-This quick start changes as tasks land. The target flow and API are in [docs/API.md](docs/API.md) and
-[docs/OPERATIONS.md](docs/OPERATIONS.md).
+Replay a dataset slice and check the layers: see [tools/replayer/README.md](tools/replayer/README.md) and
+`infra/clickhouse/maintenance/run.sh reconcile`. The read API, UI, and agent arrive in the next
+[roadmap](#roadmap) milestones, see [docs/API.md](docs/API.md) for the target contract.
 
 ## Data
 
