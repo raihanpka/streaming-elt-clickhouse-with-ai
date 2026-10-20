@@ -3,10 +3,8 @@
 Bromo is a streaming ELT pipeline into ClickHouse with a Java API and UI on top and a Python AI agent that
 investigates anomalies. This document is the canonical architecture reference.
 
-> **Status: target architecture.** The code is catching up with this document, see the
-> [roadmap](../README.md#roadmap). Until milestone M1 is done, `bromo-app` still contains Kafka, Cassandra,
-> PostgreSQL, and Redis adapters that are not part of this architecture. Where this document and the code disagree,
-> this document is the target.
+> **Status:** milestone M1 is implemented: ingest, the three warehouse layers, the data contract, and the replayer.
+> The read API, UI, agent, and chat are the target of later milestones, see the [roadmap](../README.md#roadmap).
 
 ## 1. Principles
 
@@ -138,7 +136,7 @@ Rules (checked by ArchUnit):
 
 The only interface by design is `AgentClient`, the process boundary to the Python agent, which tests replace with a fake. Everything else is a concrete class.
 
-There is no separate `bromo-core` module and no `domain/application/infrastructure/web` layering. A single deployable does not need them. The current code is reshaped in milestone M1.
+There is no separate `bromo-core` module and no `domain/application/infrastructure/web` layering. A single deployable does not need them.
 
 ## 6. Python agent
 
@@ -195,7 +193,7 @@ Summary here, details in [SECURITY.md](../SECURITY.md) and [AGENT.md](AGENT.md).
 
 ## 11. Performance targets
 
-No benchmarks have been run. The first goals are set before measurement and revised after it:
+Goals are set before measurement and revised after it. Baselines measured so far are in [benchmarks/](../benchmarks/README.md):
 
 | Goal | Target on the reference VPS (12 GB RAM, 2 CPU, arm64) |
 |---|---|

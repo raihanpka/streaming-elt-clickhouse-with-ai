@@ -85,10 +85,6 @@ listed there with its default and a comment. Copy it to `.env` and never commit 
 - Static keys and tokens are a deliberate simplification. A key table in ClickHouse is the upgrade when there is more
   than one tenant.
 
-Variables read by the current code that are removed in milestone M1: `KAFKA_BOOTSTRAP_SERVERS`, `CASSANDRA_CONTACT_POINTS`, `CASSANDRA_KEYSPACE`,
-`CASSANDRA_DATACENTER`, `SCYLLADB_CONTACT_POINTS`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`,
-`POSTGRES_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `POSTHOG_ENABLED`, `POSTHOG_API_KEY`, `POSTHOG_HOST`.
-
 ## Operational conventions
 
 | Area | Convention |
