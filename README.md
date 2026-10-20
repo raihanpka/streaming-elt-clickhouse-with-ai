@@ -8,8 +8,8 @@
 **A self-hosted streaming ELT pipeline into ClickHouse, with an AI agent that detects and explains data and anomalies.**
 
 Send events as CloudEvents over HTTP. Bromo loads them into ClickHouse, models them inside the
-warehouse (raw, events, marts), and shows pipeline health, analytics, and findings in a web UI. A Python agent watches
-the marts, detects anomalies with statistics, and explains anomalies and any selected data with read-only SQL. You can ask questions in the web
+warehouse in three layers (bronze, silver, gold), and shows pipeline health, analytics, and findings in a web UI. A Python agent watches
+the gold tables, detects anomalies with statistics, and explains anomalies and any selected data with read-only SQL. You can ask questions in the web
 chat.
 
 *Named after Mount Bromo. Like volcanologists measure emissions to understand a mountain, Bromo measures your events to
@@ -24,7 +24,7 @@ make them understandable.*
 | View | Shows |
 |---|---|
 | Pipeline health | Throughput, freshness, end-to-end lag, reject rate, and reconciliation between stages |
-| Analytics | Volume, amounts, and rates per minute with breakdowns, read from gold marts |
+| Analytics | Volume, amounts, and rates per minute with breakdowns, read from the gold layer |
 | Findings and chat | Anomalies the agent found, each with the SQL evidence, and a chat that answers with the SQL it ran |
 
 ## Architecture
@@ -36,12 +36,12 @@ flowchart LR
 
     subgraph W["ClickHouse"]
         direction LR
-        RAW[raw] --> EV[events] --> MA[mart_*]
+        BR[bronze] --> SI[silver] --> GO[gold]
     end
 
     AG[bromo-agent<br/>Python detector and AI agent]
-    MA --> AG
-    EV --> AG
+    GO --> AG
+    SI --> AG
     AG --> FD[agent_findings]
     FD --> A
     A -->|gRPC| AG
@@ -55,6 +55,27 @@ flowchart LR
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DATA.md](docs/DATA.md),
 [docs/AGENT.md](docs/AGENT.md).
+
+## Warehouse layers
+
+Bromo stores data in three layers, the medallion layout. Each layer is its own ClickHouse database with several tables.
+A layer is a stage of data quality, not a deployment environment.
+
+| Layer | What it is |
+|---|---|
+| **Bronze** | Events exactly as the ingest API received them, unmodified and append-only, kept for a short time. Because nothing is interpreted here, a bug in later logic never loses data. |
+| **Silver** | The clean copy: events parsed into typed columns, validated, and deduplicated. Rows that fail validation are kept in a separate table with a reason. |
+| **Gold** | Per minute tables built for questions (volumes, sums, percentiles, distinct counts). The API, the UI, and the anomaly detector read gold. |
+
+Details, table lists, and rebuild rules are in [docs/DATA.md](docs/DATA.md#warehouse-layers).
+
+## Make it yours
+
+Everything specific to your data lives in one file, [config/data-contract.yml](config/data-contract.yml): the event rules,
+which fields become typed columns, the layer names, the gold tables, and the metrics. Edit it, run
+`./gradlew :bromo-app:generateWarehouseSql`, and the ingest validation, the ClickHouse SQL, the metric list, the agent's
+context, and the tests all follow. The tests build their events from a sample in the same file, so they work for any
+contract. See [docs/DATA.md](docs/DATA.md#the-data-contract).
 
 ## Design choices
 
@@ -133,7 +154,7 @@ docs/             Architecture, data, agent, API, operations, decisions
 
 | Milestone | Delivers |
 |---|---|
-| M1 Pipeline | Single-node ClickHouse, `raw` / `events` / `mart_*` layers with rejects and reconciliation, slimmed Java ingest in feature modules, dataset replayer |
+| M1 Pipeline | Single-node ClickHouse, bronze, silver, and gold layers with rejects and reconciliation, slimmed Java ingest in feature modules, dataset replayer |
 | M2 Analytics | Pipeline status and metrics endpoints, UI views for pipeline health and analytics, synthetic event generator with anomaly manifest |
 | M3 Agent | Read-only agent user, detector, agent loop, findings, chat over gRPC with limits |
 | M4 Evidence and demo | Evaluation harness, benchmarks, public single-VPS deployment |
