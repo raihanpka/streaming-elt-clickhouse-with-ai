@@ -1,0 +1,82 @@
+# Mapping for the OnTime flights dataset: US domestic flights with delay causes, from the Bureau of Transportation
+# Statistics (BTS). ClickHouse hosts a copy in a public S3 bucket, one gzip CSV per year (1987 to 2022).
+#   https://clickhouse.com/docs/getting-started/example-datasets/ontime
+#
+# The rows are read by a ClickHouse query, so the server sorts and filters them. Each run downloads the yearly file
+# (100 to 470 MB), so pick a window with --since and --until and a size with --limit.
+#
+# Terms of use: check https://www.transtats.bts.gov before publishing anything derived from the data. The ClickHouse
+# page does not state a license.
+#
+# Pair it with the data contract config/examples/ontime-flights.yml, whose field paths match the keys under event.data.
+#
+# Notes about the data:
+#   FlightDate has no time of day. The event time is FlightDate plus the scheduled departure time (CRSDepTime), local
+#   time of the origin airport, read here as UTC because the file has no time zone.
+#   Delay columns are NULL for cancelled flights and the five cause columns are filled for every flight that is 15
+#   minutes or more late (checked for 2005 to 2022).
+#
+# Example:
+#   replay --mapping datasets/ontime-flights.yml --param year=2022 --since 2022-01-01 --until 2022-01-31 \
+#          --limit 1000000 --speed 5000
+name: ontime-flights
+license: https://www.transtats.bts.gov
+source:
+  type: clickhouse
+  query: >
+    SELECT
+      toUnixTimestamp(toDateTime(FlightDate, 'UTC')
+        + toIntervalMinute(intDiv(least(CRSDepTime, 2359), 100) * 60 + least(CRSDepTime, 2359) % 100)) AS event_time,
+      trimBoth(Reporting_Airline) AS airline,
+      trimBoth(Origin) AS origin,
+      trimBoth(OriginState) AS origin_state,
+      trimBoth(Dest) AS dest,
+      trimBoth(DestState) AS dest_state,
+      Cancelled AS cancelled,
+      trimBoth(CancellationCode) AS cancellation_code,
+      Diverted AS diverted,
+      if(Cancelled = 1, NULL, DepDelay) AS dep_delay_minutes,
+      if(Cancelled = 1, NULL, ArrDelay) AS arr_delay_minutes,
+      if(Cancelled = 1, NULL, CarrierDelay) AS carrier_delay_minutes,
+      if(Cancelled = 1, NULL, WeatherDelay) AS weather_delay_minutes,
+      if(Cancelled = 1, NULL, NASDelay) AS nas_delay_minutes,
+      if(Cancelled = 1, NULL, SecurityDelay) AS security_delay_minutes,
+      if(Cancelled = 1, NULL, LateAircraftDelay) AS late_aircraft_delay_minutes,
+      Distance AS distance_miles,
+      trimBoth(Tail_Number) AS tail_number,
+      Flight_Number_Reporting_Airline AS flight_number
+    FROM s3('https://clickhouse-public-datasets.s3.amazonaws.com/ontime/csv_by_year/{year}.csv.gz', NOSIGN, CSVWithNames)
+    WHERE FlightDate >= toDate('{since}') AND FlightDate <= toDate('{until}') AND CRSDepTime IS NOT NULL
+    ORDER BY event_time, airline, flight_number, origin, dest
+    LIMIT {limit}
+  params:
+    year: "2022"
+    since: "2022-01-01"
+    until: "2022-01-31"
+    limit: "1000000"
+time:
+  column: event_time
+  unit: epoch_seconds
+event:
+  type: gov.bts.flight.v1
+  source: bts-ontime
+  id: "ontime-{row}"
+  subject: "{tail_number}"
+  data:
+    airline: { column: airline }
+    origin: { column: origin }
+    origin_state: { column: origin_state }
+    dest: { column: dest }
+    dest_state: { column: dest_state }
+    cancelled: { column: cancelled, cast: int }
+    cancellation_code: { column: cancellation_code }
+    diverted: { column: diverted, cast: int }
+    dep_delay_minutes: { column: dep_delay_minutes, cast: int }
+    arr_delay_minutes: { column: arr_delay_minutes, cast: int }
+    carrier_delay_minutes: { column: carrier_delay_minutes, cast: int }
+    weather_delay_minutes: { column: weather_delay_minutes, cast: int }
+    nas_delay_minutes: { column: nas_delay_minutes, cast: int }
+    security_delay_minutes: { column: security_delay_minutes, cast: int }
+    late_aircraft_delay_minutes: { column: late_aircraft_delay_minutes, cast: int }
+    distance_miles: { column: distance_miles, cast: int }
+    flight_number: { column: flight_number }
