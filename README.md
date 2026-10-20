@@ -110,9 +110,11 @@ Replay a dataset slice and check the layers: see [tools/replayer/README.md](tool
 
 ## Data
 
-Bromo is demonstrated with replayed slices of public datasets (for example labeled card-fraud transactions) and a
-synthetic generator that injects known anomalies. Datasets are downloaded by script and never committed. See
-[docs/DATA.md](docs/DATA.md#datasets) for sources, slicing, and license notes.
+Bromo is demonstrated with a replayed slice of the OnTime flights dataset (US flights with delay causes from the
+Bureau of Transportation Statistics, hosted by ClickHouse), plus a synthetic generator that injects known anomalies.
+The causes in the data let an answer such as "delays rose in Texas because of weather" be checked. Datasets are read
+through ClickHouse or downloaded and never committed. See [docs/DATA.md](docs/DATA.md#datasets) for the dataset, slicing,
+and license notes.
 
 ## Repository layout
 

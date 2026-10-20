@@ -73,6 +73,7 @@ What follows the contract automatically:
 
 Existing ClickHouse: set `layers` to your databases, keep the generated SQL as a reference, and point
 `CLICKHOUSE_HOST` and `CLICKHOUSE_HTTP_PORT` at your server. The ingest API only needs `INSERT` on the bronze table.
+A ready made contract for different data is in `config/examples/`.
 
 Extension points, each marked `CUSTOMIZE` in the code:
 
@@ -187,38 +188,68 @@ bypasses the ingest API.
 
 ## Datasets
 
-Real data from running banks, insurers, or streaming services is private. Public options are research datasets. Bromo
-uses them through **replay**: the replayer reads a timestamped slice and emits it as events. The pipeline cannot tell
-the difference from live traffic, and labels give ground truth for evaluation.
+Real data from running banks, insurers, or streaming services is private. Public datasets are used through
+**replay**: the replayer reads a slice and sends it as events through the ingest API. The pipeline cannot tell the
+difference from live traffic.
 
 > **License notice.** Licenses were not verified when this was written. Check each dataset's page before publishing
-> anything derived from it. Datasets are never committed. Scripts download them.
+> anything derived from it. Datasets are never committed. The replayer downloads them or reads them through ClickHouse.
+
+### Primary dataset: OnTime flights
+
+US domestic flights with delay causes, from the Bureau of Transportation Statistics. ClickHouse hosts a copy in a public
+S3 bucket, one gzip CSV per year from 1987 to 2022, roughly five to seven million flights a year. It was chosen because:
+
+- **The explanation is in the data.** From 2005 on, every flight that is 15 minutes or more late carries the minutes by
+  cause: airline, weather, national air system, security, late aircraft. An answer such as "delays rose in Texas because
+  of weather" can be checked against those columns. Cancellations carry a cause code too.
+- **It is analytical.** Airline, origin and destination airport and state, distance, delays, cancellations, and a long
+  history with storms and busy seasons.
+- **It is safe to serve publicly.** No personal data, only airport codes and aircraft tail numbers.
+
+Contract: `config/examples/ontime-flights.yml` (fields, two gold tables, metrics). Mapping and query:
+`tools/replayer/datasets/ontime-flights.yml`. Facts checked on the real files: the file is not sorted by date, so the
+query sorts it; `FlightDate` has no time of day, so the event time is the date plus the scheduled departure time (local
+time of the origin airport, read as UTC); delay columns are `NULL` or zero for cancelled flights, so the query nulls them;
+airport codes are padded with spaces, so the query trims them.
+
+Try it on a clean local stack without touching the repository:
+
+```bash
+./gradlew :bromo-app:generateWarehouseSql -PcontractFile=config/examples/ontime-flights.yml -PoutputDir=/tmp/ontime-init
+CLICKHOUSE_INIT_DIR=/tmp/ontime-init docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
+BROMO_DATA_CONTRACT=config/examples/ontime-flights.yml ./gradlew :bromo-app:bootRun
+cd tools/replayer && .venv/bin/replay --mapping datasets/ontime-flights.yml --param year=2022 \
+    --since 2022-01-01 --until 2022-03-31 --limit 1000000 --speed 1440
+```
+
+### Other datasets
 
 | Dataset | What it is | Size | Labels | Role |
 |---|---|---|---|---|
-| ULB credit card fraud (Kaggle) | Real European card transactions, PCA-anonymized features, `Time` offset, `Class` | 284,807 rows, 492 fraud | Yes | Primary real-data story |
+| ULB credit card fraud (Kaggle) | Real European card transactions, PCA-anonymized features, `Time` offset, `Class` | 284,807 rows, 492 fraud | Yes | Fraud story, mapping in `datasets/ulb-fraud.yml` |
 | IEEE-CIS fraud (Vesta, Kaggle) | Real e-commerce transactions with card, product, device columns | 590,540 rows, about 3.5% fraud | Yes | Optional, richer dimensions |
-| Synthetic LLM telemetry (own generator) | Completions, tokens, latency, cost, feedback | Any | Injected anomalies with a manifest | Controlled agent evaluation |
-| MovieLens (GroupLens) | Real ratings with timestamps | Varies | No anomaly labels | Optional adapter. Redistribution is restricted, download only. |
-| ClickHouse GitHub events | Public GitHub activity 2011 to 2020 | About 3.1 billion rows | No | Optional schema volume test |
-| Wikimedia recent changes | Public live edit stream | Live | No | Optional live source. Check terms first. |
+| NYC taxi (ClickHouse sample) | Taxi trips with fares and areas | About 3 million rows | No | Optional volume test |
+| ClickBench hits | Anonymized web analytics, 105 columns | 100 million rows | No | Optional wide events |
+| Synthetic generator | Seasonal traffic with injected anomalies and a manifest | Any | Known anomalies | Scoring the agent when the start of an anomaly must be exact |
+| MovieLens, GitHub events, Wikimedia | Ratings, activity, edits | Varies | No | Optional. Check terms first. |
 
 Not used: PaySim (synthetic, and balance columns leak the label). Insurance: no good public transactional dataset was
 found, so none is claimed.
 
 ### Slicing and time
 
-Large datasets are taken in chunks: `--limit N`, `--since`/`--until` (window in the dataset's own time), and
-`--speed X`. The default slice is 100,000 to 1,000,000 events. Benchmarks record the exact flags.
+Large datasets are taken in chunks: `--limit N`, `--since` and `--until`, and `--speed X`. For a ClickHouse query
+source these fill the `{since}`, `{until}`, and `{limit}` placeholders of the mapping query, and `--param KEY=VALUE`
+fills the others. Parameter values are checked and never trusted. Benchmarks record the exact flags.
 
 **Event time is rebased to the wall clock.** Dataset timestamps can be years old, which would fall outside retention
-and the detector's recent window. The replayer maps the dataset's first timestamp to now and keeps the relative
-spacing divided by `--speed`. The original timestamp is kept in `attrs.originalTime`.
+and the detector's recent window. The replayer maps the first timestamp of the slice to now and keeps the relative
+spacing divided by `--speed`. The original value is kept in `attrs.originalTime`.
 
-### Mapping
-
-The fraud datasets become `com.example.payment.v1` events: `amount` and `label` are hot columns, the remaining
-features go into `attrs`.
+**Speed decides what a gold minute means.** A gold row is one replay minute. At `--speed 1440` one replay minute is one
+day of the dataset, so a month of flights becomes about 30 minutes of replay and the gold tables show day by day
+changes. A very high speed squeezes a whole quarter into a few minutes and the gold tables become too coarse.
 
 ### Synthetic generator
 
@@ -233,7 +264,8 @@ Normal traffic with seasonality plus injected anomalies:
 The same seed gives the same events and the same `manifest.json` (start, end, dimension, type of every anomaly). The
 evaluation harness scores the agent against it.
 
-### Adding an adapter
+### Adding a dataset
 
-An adapter yields `(time, id, source, type, data)` tuples. The replayer handles pacing, batching, retries, and
-CloudEvents formatting. An adapter needs a download script and a license note in `tools/replayer/README.md`.
+Copy a mapping from `tools/replayer/datasets/`. A CSV file needs a time column. A ClickHouse source needs a query that
+returns the rows sorted by time. The replayer handles pacing, batching, retries, and CloudEvents formatting. Add a
+contract under `config/examples/` when the fields differ, and a license note in the mapping file.

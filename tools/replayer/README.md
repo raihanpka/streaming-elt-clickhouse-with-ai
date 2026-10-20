@@ -1,7 +1,6 @@
 # Replayer
 
-Replays a slice of a dataset through the Bromo ingest API as CloudEvents. The pipeline cannot tell a replay from live
-traffic, so replays exercise the real path and labels in the data give ground truth.
+Replays a slice of a dataset through the Bromo ingest API as CloudEvents. The pipeline cannot tell a replay from live traffic, so replays exercise the real path and labels in the data give ground truth.
 
 ## Quick start
 
@@ -20,6 +19,21 @@ Flags: `--limit N`, `--since` and `--until` (dataset time, same scale as the tim
 pace), `--batch-size N`, `--url`, `--api-key`, `--dry-run`, `--summary FILE`. The run prints `planned` and `sent` counts
 and writes them to `replay-summary.json`.
 
+## Sources
+
+| Source | Use it when | Needs |
+|---|---|---|
+| CSV file | The data is a local file | `--file` |
+| ClickHouse query | The data lives in ClickHouse or a public bucket it can read (`s3()`, `url()`), or the slice must be sorted and filtered by the server | `--source-url`, `--source-user`, `--source-password`, optional `--param KEY=VALUE` |
+
+A ClickHouse source puts a `source.query` in the mapping. It uses `{since}`, `{until}`, `{limit}` and the keys under
+`source.params` as placeholders, returns rows sorted by the time column, and leaves `FORMAT` out. Defaults read the
+`REPLAYER_SOURCE_URL`, `REPLAYER_SOURCE_USER`, and `REPLAYER_SOURCE_PASSWORD` variables, or `CLICKHOUSE_ADMIN_PASSWORD`.
+For a public playground such as `https://play.clickhouse.com` use user `explorer` with an empty password.
+
+Rows are streamed in batches, so a slice of millions of rows does not sit in memory. Empty and null values are left out
+of the event data.
+
 ## How it works
 
 - **Time is rebased to the wall clock.** The first event gets the current time and the spacing of the rest is divided by
@@ -32,8 +46,9 @@ and writes them to `replay-summary.json`.
 
 ## Adding a dataset
 
-Copy `datasets/ulb-fraud.yml`, set the time column and unit, and map the columns to the keys that the `fields` of
-`config/data-contract.yml` expect. No code changes are needed for another CSV.
+Copy `datasets/ulb-fraud.yml` (CSV) or `datasets/ontime-flights.yml` (ClickHouse query), set the time column and unit,
+and map the columns to the keys that the `fields` of your data contract expect. No code changes are needed for another
+CSV or query.
 
 ## Reconciliation
 
