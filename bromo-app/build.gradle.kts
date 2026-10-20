@@ -33,3 +33,13 @@ tasks.register<JavaExec>("generateWarehouseSql") {
         providers.gradleProperty("outputDir").orElse("infra/clickhouse").get(),
     )
 }
+
+// Tests read the real data contract so they follow whatever the user put in it.
+tasks.test {
+    systemProperty("bromo.contract.path", rootProject.file("config/data-contract.yml").absolutePath)
+}
+
+// Run the app from the repository root so config/data-contract.yml is found.
+tasks.bootRun {
+    workingDir = rootProject.projectDir
+}

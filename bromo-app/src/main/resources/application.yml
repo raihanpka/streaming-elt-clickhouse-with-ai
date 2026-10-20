@@ -24,12 +24,13 @@ logging:
     io.bromo: INFO
 
 bromo:
+  contract:
+    path: ${BROMO_DATA_CONTRACT:config/data-contract.yml}
   clickhouse:
     url: http://${CLICKHOUSE_HOST:localhost}:${CLICKHOUSE_HTTP_PORT:8123}
   ingest:
     max-event-bytes: ${BROMO_MAX_EVENT_BYTES:65536}
     max-batch-events: ${BROMO_MAX_BATCH_EVENTS:500}
-    retention-days: 90
     clickhouse-user: ingest_writer
     clickhouse-password: ${CLICKHOUSE_INGEST_PASSWORD:}
     api-keys: ${BROMO_API_KEY:}
