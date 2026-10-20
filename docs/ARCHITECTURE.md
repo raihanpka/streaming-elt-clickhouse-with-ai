@@ -14,7 +14,7 @@ investigates anomalies. This document is the canonical architecture reference.
    analytics and the agent.
 2. **One datastore.** ClickHouse stores raw data, modeled data, rollups, and agent findings.
 3. **ELT, not ETL.** Load first, transform inside the warehouse with materialized views.
-4. **Vertical slices.** The Java backend is organized by feature. Slices do not import each other.
+4. **Feature modules.** The Java backend is organized by feature. Modules do not import each other.
 5. **Abstraction at real boundaries only.** An interface needs two real implementations or a process boundary.
 6. **Safety in the database.** Read-only access for the agent is enforced by ClickHouse, not by a prompt.
 7. **Measured claims.** Every performance or accuracy statement links to a reproducible benchmark.
@@ -116,7 +116,7 @@ sequenceDiagram
 3. `bromo-app` calls the `Chat` gRPC method on `bromo-agent` and streams events back as Server-Sent Events.
 4. The answer includes the SQL that was run.
 
-## 5. Java backend: vertical slices
+## 5. Java backend: feature modules
 
 ```
 bromo-app/src/main/java/io/bromo/
@@ -131,9 +131,9 @@ bromo-app/src/main/java/io/bromo/
 
 Rules (checked by ArchUnit):
 
-- A slice does not import another slice.
-- `shared` does not import any slice.
-- Only `bootstrap` knows every slice.
+- A module does not import another module.
+- `shared` does not import any module.
+- Only `bootstrap` knows every module.
 - Controllers contain no SQL. Services and queries contain no HTTP types.
 
 The only interface by design is `AgentClient`, the process boundary to the Python agent, which tests replace with a fake. Everything else is a concrete class.

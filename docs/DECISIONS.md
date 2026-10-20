@@ -23,7 +23,7 @@ and the number of moving parts.
 and marts can over-count by that rate, so the rate is measured and published. There is no transactional store, so auth
 uses static keys until a second tenant exists. Without a broker there is no durable buffer: when ClickHouse is down
 ingest returns `503` and clients retry, and there is no topic replay (silver and gold are rebuilt from `raw`). If
-buffering or fan-out becomes necessary, a broker can be placed behind a single write seam in the `ingest` slice.
+buffering or fan-out becomes necessary, a broker can be placed behind a single write seam in the `ingest` module.
 
 **Rejected.** Cassandra for events plus ClickHouse for analytics (two stores for one dataset). Flink (heavy, not needed
 for per-minute aggregates). A Kafka topic between ingest and ClickHouse (durable buffer and replay, but another JVM and
@@ -48,7 +48,7 @@ Fallback if gRPC costs too much: internal HTTP with Server-Sent Events.
 **Rejected.** Whole backend in Python (discards the Java backend). Agent in Java with Spring AI (smaller agent
 ecosystem, less provider flexibility).
 
-## ADR 3: Vertical slice architecture in the Java backend
+## ADR 3: Feature modules in the Java backend
 
 Status: accepted, 2026-10-20.
 
@@ -56,11 +56,11 @@ Status: accepted, 2026-10-20.
 extra `bromo-core` module would spread each feature over four packages and invite one interface per repository.
 
 **Decision.** Organize `io.bromo` by feature: `ingest`, `pipeline`, `metrics`, `findings`, `chat`, plus `shared` and
-`bootstrap`. A slice never imports another slice, `shared` never imports a slice, and only `bootstrap` sees all slices
+`bootstrap`. A module never imports another module, `shared` never imports a module, and only `bootstrap` sees all modules
 (ArchUnit enforces this). Interfaces exist only for two real implementations or a process boundary (`AgentClient`). There is no `bromo-core` module.
 
-**Consequences.** A feature change touches one package. Small duplication between slices is allowed, extract to `shared`
-only when two slices need the same stable thing.
+**Consequences.** A feature change touches one package. Small duplication between modules is allowed, extract to `shared`
+only when two modules need the same stable thing.
 
 **Rejected.** Keeping hexagonal layers. One flat package.
 
