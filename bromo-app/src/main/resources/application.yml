@@ -24,7 +24,7 @@ management:
     annotations:
       enabled: true
 
-# Bromo-specific config
+# Bromo-specific config. The cassandra and export keys are removed in milestone M1.
 bromo:
   kafka:
     topics:

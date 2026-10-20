@@ -1,5 +1,6 @@
 // Bromo: Spring Boot application module
-// Single deployable unit. Internal packages: domain, application, infrastructure, web, bootstrap.
+// Java backend. Target layout is vertical slices (see docs/ARCHITECTURE.md); the current
+// domain/application/infrastructure/web packages are reshaped in milestone M1.
 // `java` is declared explicitly so the Kotlin DSL can resolve `implementation`,
 // `runtimeOnly`, and `testImplementation` at script-compile time. Spring Boot
 // would apply it transitively, but the script-compile classpath is resolved

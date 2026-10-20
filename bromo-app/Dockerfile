@@ -1,8 +1,6 @@
-# Bromo: Multi-stage Dockerfile
-#   JVM image:  docker build -t bromo:app .
-#   Native img: docker build --target native -t bromo:native .  (requires GraalVM JDK 21+ as the build-time JVM)
-#
-# Runtime is distroless (Eclipse Temurin JRE 21).
+# Bromo: Multi-stage Dockerfile for bromo-app. Build from the repository root:
+#   docker build -f bromo-app/Dockerfile -t bromo-app .
+# The native stage is experimental and not part of the plan. The runtime stage uses Eclipse Temurin JRE 21.
 
 # =============================================================================
 # Stage 1: build
@@ -22,7 +20,7 @@ RUN --mount=type=cache,target=/root/.gradle \
     ./gradlew :bromo-app:bootJar -x test --no-daemon
 
 # =============================================================================
-# Stage 2: extract layers (Spring Boot 3.x layered jars)
+# Stage 2: extract layers (Spring Boot layered jars)
 # =============================================================================
 FROM eclipse-temurin:21-jre AS layers
 

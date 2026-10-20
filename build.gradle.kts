@@ -1,5 +1,5 @@
 // Bromo: Root build
-// Single deployable unit. Subprojects: bromo-core (shared library) + bromo-app (application).
+// Subprojects: bromo-app (Java API, ingest, UI hosting) and bromo-core (empty, removed in milestone M1).
 // The `java` plugin is applied per subproject via its own `plugins { }` block
 // (`java-library` for bromo-core, transitively via `spring-boot` for bromo-app).
 // Shared configuration is registered as a deferred callback that fires once

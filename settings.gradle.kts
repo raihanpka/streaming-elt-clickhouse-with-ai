@@ -12,7 +12,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "bromo-event-pipeline"
+rootProject.name = "streaming-elt-clickhouse-with-ai"
 
 include(
     "bromo-core",

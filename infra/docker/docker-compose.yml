@@ -1,9 +1,10 @@
 # Bromo local stack. One command: `docker compose -f infra/docker/docker-compose.yml up -d`.
-# Pulls all images, creates the network, and starts Kafka, Cassandra, PostgreSQL, Redis, and Bromo.
+# Local stack (Kafka, Cassandra, PostgreSQL, Redis, optional ScyllaDB and Bromo). Milestone M1 reduces it to
+# ClickHouse only. See docs/OPERATIONS.md.
 
 services:
 
-  # ---- Event bus (single-node KRaft) ----
+  # Event bus (single node KRaft)
   kafka:
     image: apache/kafka:4.3.0
     container_name: bromo-kafka
@@ -35,7 +36,7 @@ services:
     networks:
       - bromo-net
 
-  # ---- Time-series store (LTS) ----
+  # Time series store
   cassandra:
     image: cassandra:4.1
     container_name: bromo-cassandra
@@ -59,7 +60,7 @@ services:
     networks:
       - bromo-net
 
-  # ---- Metadata store (auth, config, alerts) ----
+  # Metadata store (auth, config, alerts)
   postgres:
     image: postgres:18-alpine
     container_name: bromo-postgres
@@ -88,7 +89,7 @@ services:
     networks:
       - bromo-net
 
-  # ---- Cache (rate limit, JWT blacklist) ----
+  # Cache (rate limit, JWT blacklist)
   redis:
     image: redis:7-alpine
     container_name: bromo-redis
@@ -105,7 +106,7 @@ services:
     networks:
       - bromo-net
 
-  # ---- Bromo application (pre-built image from GHCR) ----
+  # Bromo application (pre-built image from GHCR)
   bromo:
     image: ghcr.io/raihanpka/bromo:bromo-app-latest
     container_name: bromo-app

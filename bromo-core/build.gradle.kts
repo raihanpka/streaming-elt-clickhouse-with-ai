@@ -1,6 +1,4 @@
-// Bromo: Shared library module
-// Pure Java types shared between bromo-app and external consumers (Maven Central).
-// No Spring, no Kafka, no framework imports. Zero dependencies.
+// Bromo: shared library module. Empty, removed in milestone M1 (see docs/DECISIONS.md, ADR 3).
 
 plugins {
     `java-library`

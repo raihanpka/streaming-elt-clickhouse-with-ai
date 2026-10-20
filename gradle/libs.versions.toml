@@ -1,6 +1,6 @@
 [versions]
 # Build
-# - Java: minimum 21 LTS required. System JDK 21+ is used to compile (no
+# Java: minimum 21 LTS required. System JDK 21+ is used to compile (no
 #   toolchain lock-in). Output is Java 21 bytecode and runs on any JDK 21+.
 java = "21"
 spring-boot = "4.1.0"
@@ -11,8 +11,8 @@ postgresql = "42.7.11"
 lettuce = "7.6.0.RELEASE"
 
 # Observability
-# - micrometer-tracing is BOM-managed by Spring Boot 4.1.
-# - opentelemetry is pinned to current stable; switch to opentelemetry-bom
+# micrometer-tracing is BOM-managed by Spring Boot 4.1.
+# opentelemetry is pinned to current stable; switch to opentelemetry-bom
 #   if more otel modules get added.
 opentelemetry = "1.63.0"
 
