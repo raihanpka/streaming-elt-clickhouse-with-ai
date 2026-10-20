@@ -1,15 +1,14 @@
 # AGENTS.md
 
 Instructions for AI coding agents and human contributors working on Bromo. This file wins over any other guide for
-anything inside this repository. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing structure, and the
-roadmap in [README.md](README.md#roadmap) before starting work.
+anything inside this repository. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing structure.
 
 ## Goal
 
 Bromo is a streaming ELT pipeline into ClickHouse (bronze, silver, gold), with a Java API and UI on top, and a Python AI
 agent that investigates anomalies read-only. Data engineering comes first, analytics second, the agent third.
 
-Scope discipline: build only what the [roadmap](README.md#roadmap) asks for. Do not add speculative features, config
+Scope discipline: build only what the task asks for. Do not add speculative features, config
 for values that never change, or abstractions with one implementation. Say "not doing" in a sentence instead of
 building it.
 
@@ -193,7 +192,7 @@ infra/clickhouse/maintenance/run.sh reconcile  # compare the layers; also: repro
 cd tools/replayer && .venv/bin/python -m pytest && .venv/bin/ruff check .   # replayer tests and lint
 ```
 
-Some commands exist only after the matching [roadmap](README.md#roadmap) milestone is done.
+Some commands, such as the Python agent tools, exist only once that part of the project is built.
 
 ## Documentation Map
 

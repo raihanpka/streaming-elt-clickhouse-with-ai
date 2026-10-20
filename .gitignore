@@ -188,7 +188,7 @@ gradle-app.setting
 helm/charts/
 *.tgz
 
-# Temp directory (local planning, roadmap, notes)
+# Temp directory (local planning notes)
 temp/
 
 # End of https://www.toptal.com/developers/gitignore/api/java,macos,gradle,intellij+all

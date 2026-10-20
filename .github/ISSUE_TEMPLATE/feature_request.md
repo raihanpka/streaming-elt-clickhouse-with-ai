@@ -14,4 +14,4 @@ labels: enhancement
 
 ## Scope check
 
-Bromo keeps a small scope. See "Not planned" in the README roadmap. If this is on that list, explain why it should change.
+Bromo keeps a small scope. See "Out of scope" in the README. If this is on that list, explain why it should change.

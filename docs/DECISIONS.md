@@ -42,7 +42,7 @@ hosting. `bromo-agent` (Python) is an internal service: detector, agent loop, LL
 server-streaming `Chat` RPC. The agent is never exposed outside the compose network.
 
 **Consequences.** A typed contract and token streaming. Costs: protobuf code generation on both sides, a gRPC
-dependency in Spring Boot 4.1 (verify the integration in the milestone that needs it), and two toolchains in CI.
+dependency in Spring Boot 4.1 (verify the integration before building on it), and two toolchains in CI.
 Fallback if gRPC costs too much: internal HTTP with Server-Sent Events.
 
 **Rejected.** Whole backend in Python (discards the Java backend). Agent in Java with Spring AI (smaller agent

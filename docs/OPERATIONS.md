@@ -2,8 +2,7 @@
 
 Deployment, configuration, and the operational conventions Bromo follows.
 
-> **Status:** target. The compose file is rebuilt in milestone M1 and the public deployment is part of M4. See the
-> roadmap in the [README](../README.md#roadmap).
+> **Status:** local deployment with Docker Compose works. The single VPS deployment described below is planned.
 
 ## Deployment
 

@@ -13,17 +13,17 @@ the hardware, and the versions used.
 
 ## Planned measurements
 
-| Area | Question | Milestone |
+| Area | Question | Status |
 |---|---|---|
-| Resource baseline | Idle RAM and disk of the stack | M1 |
-| Ingest to queryable | p50 and p95 latency on a 100k-event slice | M1 |
-| Query time | Endpoint latency on gold tables, from `system.query_log` | M2 |
-| Agent evaluation | Recall, precision, time to finding, explanation hit, cost per finding, per model | M4 |
-| Throughput and failures | Ingest ceiling on the reference machine, duplicate rate, recovery after restart | M4 |
+| Resource baseline | Idle RAM and disk of the stack | measured |
+| Ingest to queryable | p50 and p95 latency on a 100k-event slice | measured |
+| Query time | Endpoint latency on gold tables, from `system.query_log` | planned |
+| Agent evaluation | Recall, precision, time to finding, explanation hit, cost per finding, per model | planned |
+| Throughput and failures | Ingest ceiling on the reference machine, duplicate rate, recovery after restart | planned |
 
 ## Results
 
-### Resource baseline, ClickHouse idle (milestone M1)
+### Resource baseline, ClickHouse idle
 
 | Item | Value |
 |---|---|
@@ -42,7 +42,7 @@ docker stats --no-stream bromo-clickhouse
 docker system df
 ```
 
-### Ingest to queryable latency, single node (milestone M1)
+### Ingest to queryable latency, single node
 
 | Item | Value |
 |---|---|
@@ -57,7 +57,7 @@ Command: `./gradlew :bromo-app:test --tests '*IngestLatencyTest*'`. The report i
 `bromo-app/build/reports/ingest-latency.txt`. These numbers come from one run on a laptop, not from the VPS, and are
 sequential single client measurements. Treat them as a baseline, not as a capacity claim.
 
-### Replay of 100k events and layer rebuild (milestone M1, Checkpoint 1)
+### Replay of 100k events and layer rebuild
 
 | Item | Value |
 |---|---|
@@ -86,7 +86,7 @@ infra/clickhouse/maintenance/run.sh reprocess
 ```
 benchmarks/
   README.md              This file
-  agent-eval.md          Agent evaluation results (milestone M4)
+  agent-eval.md          Agent evaluation results
   runs/<date>-<name>/    One folder per run: REPORT.md, hardware.txt, commands.sh, raw output
 ```
 

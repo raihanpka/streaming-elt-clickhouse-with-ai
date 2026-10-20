@@ -6,7 +6,7 @@ Thank you for your interest. Bromo is a personal open source project with a deli
 
 1. Read the [README](README.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 2. Read [AGENTS.md](AGENTS.md). It is the rulebook for humans and AI agents alike.
-3. Check the roadmap in the README. Work outside it may be declined as out of scope. Open an issue to discuss it first.
+3. Check "Out of scope" in the README. Work outside the project's scope may be declined. Open an issue to discuss it first.
 
 ## Ways to help
 
