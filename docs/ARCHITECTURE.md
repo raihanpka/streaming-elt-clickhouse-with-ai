@@ -1,298 +1,220 @@
-# Bromo: Architecture
+# Architecture
 
-This document is the canonical architecture reference. It describes the design, internal structure, technology decisions, and operational model of the Bromo event pipeline boilerplate.
+Bromo is a streaming ELT pipeline into ClickHouse with a Java API and UI on top and a Python AI agent that
+investigates anomalies. This document is the canonical architecture reference.
 
----
+> **Status: target architecture.** The code is catching up with this document, see the
+> [roadmap](../README.md#roadmap). Until milestone M1 is done, `bromo-app` still contains Kafka, Cassandra,
+> PostgreSQL, and Redis adapters that are not part of this architecture. Where this document and the code disagree,
+> this document is the target.
 
-## 1. Philosophy
+## 1. Principles
 
-- **One deployable unit.** One Spring Boot application, one Docker image. Internally modular via packages and clean architecture layers. The modularity serves code organization, not deployment topology.
-- **Schema-agnostic.** The pipeline stores and processes whatever CloudEvents payload you send. Add new event types without changing infrastructure.
-- **Generic, not specialized.** Bromo is a boilerplate for event-driven data pipelines. Use it for AI telemetry, business metrics, IoT sensor data, audit logs, or anything else. The example event types (completions, actions, feedback) are just examples.
-- **Use the library, don't wrap the library.** Spring Kafka, Spring Data Cassandra, Spring Data JPA, and Spring Data Redis provide everything needed. Configure them, inject them, use them. Do not build abstractions on top of abstractions.
+1. **Pipeline first.** Raw events land in the warehouse, are cleaned and modeled inside it, and only then feed
+   analytics and the agent.
+2. **One datastore.** ClickHouse stores raw data, modeled data, rollups, and agent findings.
+3. **ELT, not ETL.** Load first, transform inside the warehouse with materialized views.
+4. **Vertical slices.** The Java backend is organized by feature. Slices do not import each other.
+5. **Abstraction at real boundaries only.** An interface needs two real implementations or a process boundary.
+6. **Safety in the database.** Read-only access for the agent is enforced by ClickHouse, not by a prompt.
+7. **Measured claims.** Every performance or accuracy statement links to a reproducible benchmark.
 
----
+## 2. System context
 
-## 2. System Overview
+```mermaid
+flowchart LR
+    subgraph Sources
+        R[tools/replayer<br/>dataset slices and generator]
+        C[Any client<br/>CloudEvents over HTTP]
+    end
 
-Bromo is a single Spring Boot 4.x application that hosts:
+    subgraph Backend["bromo-app (Java, Spring Boot)"]
+        IN[ingest]
+        PI[pipeline]
+        ME[metrics]
+        FI[findings]
+        CH[chat]
+    end
 
-- A **REST API** for event ingestion and querying
-- A **Kafka producer** that publishes ingested events to the event bus
-- A **Kafka Streams topology** that deduplicates, enriches, aggregates, and optionally alerts on events
-- **Repository layer** connecting to Cassandra (time-series data), PostgreSQL (metadata), and Redis (rate limiting, caching)
-- An **export scheduler** that forwards selected events to PostHog or webhooks
+    subgraph WH["ClickHouse"]
+        RAW[raw]
+        EV[events]
+        MA[mart_*]
+        FD[agent_findings]
+    end
 
-The application connects to four infrastructure services: Kafka (K-Raft mode), Cassandra, PostgreSQL, and Redis. These run as separate containers in Docker Compose or as managed services in production.
+    AG["bromo-agent (Python)<br/>detector and AI agent"]
+    LLM[LLM provider<br/>via LiteLLM]
+    UI[bromo-ui<br/>served by bromo-app]
 
----
-
-## 3. Internal Package Structure
-
+    R --> IN
+    C --> IN
+    IN --> RAW
+    RAW --> EV --> MA
+    PI --> MA
+    ME --> MA
+    FI --> FD
+    AG -->|read only| EV
+    AG -->|read only| MA
+    AG -->|findings writer| FD
+    AG --> LLM
+    CH -->|gRPC| AG
+    UI --> PI
+    UI --> ME
+    UI --> FI
+    UI --> CH
 ```
-io.bromo
-├── domain/                       # Pure Java 21. Zero framework imports.
-│   ├── model/                    # Records: Event, Metric, Alert, User, ApiKey
-│   ├── event/                    # CloudEvents wrapper, EventType registry
-│   └── repository/              # Repository interfaces (port definitions)
-│
-├── application/                  # Zero Spring imports.
-│   ├── service/                  # IngestionService, QueryService, ExportService
-│   └── port/                    # Output port interfaces (only if truly pluggable)
-│
-├── infrastructure/               # All framework and IO code.
-│   ├── messaging/                # Kafka producer, Kafka Streams topology
-│   │   ├── producer/             # EventPublisher (uses KafkaTemplate)
-│   │   ├── streams/              # Topology definitions (KStream, KTable)
-│   │   └── consumer/             # Alert consumer (if needed)
-│   ├── persistence/              # Database adapters
-│   │   ├── cassandra/            # CassandraRepository implementations
-│   │   ├── postgres/             # JpaRepository implementations
-│   │   └── migration/            # Flyway migrations
-│   ├── cache/                    # Redis: rate limiting, JWT blacklist
-│   ├── export/                   # Pluggable sinks: PostHogSink, WebhookSink
-│   └── config/                   # Framework-level config beans
-│
-├── web/                          # REST layer
-│   ├── ingestion/                # POST /api/v1/events
-│   ├── query/                    # GET /api/v1/events, GET /api/v1/metrics
-│   ├── admin/                    # Health, metrics, management
-│   └── dto/                      # Request/response DTOs
-│
-└── bootstrap/                    # Application entry point
-    ├── BromoApplication.java     # @SpringBootApplication
-    └── config/                   # App-level configuration properties
-```
 
-### Dependency Rules
+## 3. Components
 
-- `domain` has ZERO imports from Spring, Kafka, Cassandra, or any framework. Only Java standard library.
-- `application` has ZERO imports from infrastructure or web. Only imports `domain` and standard library.
-- `infrastructure` implements interfaces defined in `domain` and `application`.
-- `web` depends on `application` and `domain` only.
-- `bootstrap` wires everything together. It is the only place that knows about all layers.
+| Component | Language | Responsibility | Talks to |
+|---|---|---|---|
+| `bromo-app` | Java 21, Spring Boot 4.1 | Ingest API, read API, chat gateway, auth, rate limit, spend cap, serves the UI | ClickHouse (insert and read), `bromo-agent` (gRPC) |
+| `bromo-agent` | Python 3.12 | Detector loop, AI agent, gRPC server, evaluation | ClickHouse (read only and findings writer), LLM provider |
+| `bromo-ui` | TypeScript | Three views: pipeline health, analytics, findings and chat | `bromo-app` HTTP API only |
+| `tools/replayer` | Python | Replays dataset slices, generates synthetic events with an anomaly manifest | `bromo-app` ingest API |
+| ClickHouse | Single node | Storage, ELT, rollups, findings | |
+| Caddy | | TLS and rate limit on the public VPS | |
 
-Enforced by ArchUnit at build time.
+The Python agent is never exposed to the internet. Only `bromo-app` calls it, over the internal network.
 
----
+There is no message broker in this version. Ingest writes straight to ClickHouse using asynchronous inserts that are
+acknowledged after the flush. See [DECISIONS.md](DECISIONS.md).
 
-## 4. Technology Stack
+## 4. Flows
 
-| Layer             | Technology                        | Why                                                      |
-|-------------------|-----------------------------------|----------------------------------------------------------|
-| Runtime           | Java 21 + Spring Boot 4.x         | Virtual threads, AOT, native image support               |
-| Event bus         | Apache Kafka (KRaft mode)         | Single-binary, no Zookeeper, durable, replayable         |
-| Time-series DB    | Apache Cassandra 5.x              | Write-optimized, wide-column, no single point of failure |
-| Metadata DB       | PostgreSQL 16                     | Relational integrity. Flyway migrations.                 |
-| Cache             | Redis 7                           | Rate limiting (Lua), JWT blacklist, distributed locks    |
-| Stream processing | Kafka Streams (in-process)        | Runs inside the application JVM. No separate cluster.    |
-| Export            | PostHog + webhook                 | PostHog for product analytics. Webhook for custom sinks. |
-| Observability     | Micrometer + Prometheus + Grafana | Standard Spring Boot stack.                              |
-| Native image      | GraalVM CE (optional)             | Sub-100ms startup, ~64 MB RSS.                           |
-
----
-
-## 5. Data Flow
+### 4.1 Ingest
 
 ```mermaid
 sequenceDiagram
-    participant App as Your Application
-    participant Bromo as Bromo (Spring Boot)
-    participant Kafka as Apache Kafka
-    participant Streams as Kafka Streams (in-process)
-    participant Cassandra as Apache Cassandra
-    participant PG as Postgres
+    participant S as Source
+    participant A as bromo-app ingest
+    participant W as ClickHouse
 
-    App->>Bromo: POST /api/v1/events (CloudEvents JSON)
-    Bromo->>Bromo: Authenticate, rate limit, validate schema
-    Bromo->>Kafka: Publish to raw.events.v1
-    Bromo-->>App: 202 Accepted
-
-    Streams->>Kafka: Consume raw.events.v1
-    Streams->>Streams: Deduplicate by event.id
-    Streams->>Streams: Enrich (lookup pricing, metadata)
-    Streams->>Streams: Aggregate (windowed sums by type)
-    Streams->>Cassandra: Write enriched event
-    Streams->>Cassandra: Write aggregated metric
-    Streams->>PG: Write alert (if threshold triggered)
-
-    App->>Bromo: GET /api/v1/events?type=com.example.completion.v1&since=1h
-    Bromo->>Cassandra: Query events_by_type
-    Bromo-->>App: JSON array of events
+    S->>A: POST /api/v1/events (CloudEvents JSON, Bearer key)
+    A->>A: authenticate, validate, check size
+    A->>W: INSERT into raw (async insert, wait for flush)
+    W->>W: materialized view into events, or events_rejected
+    W->>W: materialized view into mart_*
+    A-->>S: 200 OK { accepted }
 ```
 
-The Kafka Streams topology runs inside the Bromo JVM. No separate stream processor cluster needed.
+`200` means the events are stored in `raw` and the materialized views have run for that insert. If ClickHouse is unavailable the response is `503` and the client retries. Query latency after the flush is measured and published in [benchmarks/](../benchmarks/README.md).
 
----
+### 4.2 Detection and findings
 
-## 6. Event Schema
+1. The detector queries `mart_events_1m` every `DETECT_INTERVAL_SECONDS` and scores each series with a robust z-score (median and MAD).
+2. A candidate above the threshold starts one agent run with a hard budget.
+3. The agent investigates with read-only SQL and returns a structured finding.
+4. The finding is written to `agent_findings` by a separate write-only user.
+5. `GET /api/v1/findings` reads it and the UI shows it. An optional webhook can notify.
 
-The only requirement is CloudEvents 1.0. Your event `data` field is arbitrary JSON.
+### 4.3 Chat
 
-**Required attributes:** `specversion`, `id`, `source`, `type`, `time`.
+1. The browser calls `POST /api/v1/chat` with a token.
+2. `bromo-app` checks the token, the per-token rate limit, and the daily spend cap.
+3. `bromo-app` calls the `Chat` gRPC method on `bromo-agent` and streams events back as Server-Sent Events.
+4. The answer includes the SQL that was run.
 
-**Example types shipped** (replace with your own):
+## 5. Java backend: vertical slices
 
-| Type                        | Purpose                  |
-|-----------------------------|--------------------------|
-| `com.example.completion.v1` | LLM completion example   |
-| `com.example.action.v1`     | Any action event example |
-| `com.example.feedback.v1`   | User feedback example    |
-
-Add new types by sending events with a new `type` value and adding a Cassandra table or reusing the generic `events_by_source` table. See [../EVENTS.md](../EVENTS.md).
-
----
-
-## 7. Persistence Model
-
-### 7.1 Cassandra (Time-Series)
-
-| Table              | Partition Key                   | Purpose                        |
-|--------------------|---------------------------------|--------------------------------|
-| `events_by_type`   | (type, date_bucket)             | Query events by type per day   |
-| `events_by_source` | (source, date_bucket)           | Query events by source per day |
-| `metrics_by_hour`  | (type, metric_name, year_month) | Pre-aggregated hourly metrics  |
-
-Default TTL: 90 days. All queries use prepared statements.
-
-### 7.2 PostgreSQL (Metadata)
-
-| Schema         | Tables                      | Purpose          |
-|----------------|-----------------------------|------------------|
-| `bromo_auth`   | api_keys, tenants           | Authentication   |
-| `bromo_config` | alert_rules, pricing_models | Configuration    |
-| `bromo_alerts` | alert_events                | Triggered alerts |
-
-Flyway migrations. One schema per concern.
-
-### 7.3 Redis
-
-TTL-based: rate limit counters (Lua), JWT blacklist, hot cache.
-
----
-
-## 8. Deployment
-
-### 8.1 Docker Compose (Local or VPS)
-
-`infra/docker/docker-compose.yml` defines Kafka, Cassandra, PostgreSQL, Redis, and the Bromo app. One command starts everything:
-
-```bash
-docker compose -f infra/docker/docker-compose.yml up -d
+```
+bromo-app/src/main/java/io/bromo/
+  ingest/      IngestController, IngestService, RawEventWriter, CloudEventMapper, dto
+  pipeline/    PipelineController, PipelineStatusQuery, dto
+  metrics/     MetricsController, MetricRegistry, MetricsQuery, dto
+  findings/    FindingsController, FindingsQuery, dto
+  chat/        ChatController, ChatService, AgentClient, GrpcAgentClient, RateLimiter, SpendGuard, dto
+  shared/      ProblemDetailsHandler, ClickHouseConfig, BearerAuthFilter, TimeRange
+  bootstrap/   BromoApplication, configuration properties
 ```
 
-Docker Compose pulls all images. Environment variables connect the Bromo app to the infrastructure.
+Rules (checked by ArchUnit):
 
-### 8.2 Pre-built Docker Image
+- A slice does not import another slice.
+- `shared` does not import any slice.
+- Only `bootstrap` knows every slice.
+- Controllers contain no SQL. Services and queries contain no HTTP types.
 
-Published to GHCR:
+The only interface by design is `AgentClient`, the process boundary to the Python agent, which tests replace with a fake. Everything else is a concrete class.
 
-```bash
-docker pull ghcr.io/raihanpka/bromo:bromo-app:latest
+There is no separate `bromo-core` module and no `domain/application/infrastructure/web` layering. A single deployable does not need them. The current code is reshaped in milestone M1.
+
+## 6. Python agent
+
+```
+bromo-agent/src/bromo_agent/
+  detector/     robust z-score and MAD scoring (pure functions), scheduler
+  agent/        investigation loop, tool allowlist, budget, prompts
+  serving/      gRPC server (Chat), health
+  sinks/        findings writer, optional webhook
+  evaluation/   scoring against the anomaly manifest
+  llm/          LiteLLM wrapper, the only place that names a model
+  settings.py   typed settings read once at startup
 ```
 
-### 8.3 Kubernetes (Helm)
+Details in [AGENT.md](AGENT.md).
 
-The Helm chart at `infra/helm/bromo/` deploys the Bromo app. Configure infrastructure endpoints via values.yaml.
+## 7. Warehouse
 
-```bash
-helm install bromo ./infra/helm/bromo --namespace bromo --create-namespace
-```
+Three layers, all inside ClickHouse: `raw` (bronze), `events` (silver), `mart_*` (gold). See [DATA.md](DATA.md).
 
-### 8.4 Resource Profile
+## 8. Delivery guarantees
 
-| Component     | JVM           | Native          |
-|---------------|---------------|-----------------|
-| Bromo app     | 256-512 MB    | 64-128 MB       |
-| Kafka (KRaft) | 512 MB        | --              |
-| Cassandra     | 512 MB        | --              |
-| PostgreSQL    | 256 MB        | --              |
-| Redis         | 128 MB        | --              |
-| **Total**     | **~1.7-2 GB** | **~1.1-1.5 GB** |
+| Concern | Behavior |
+|---|---|
+| Acknowledgement | `200` is returned only after the insert is flushed to ClickHouse. |
+| Retries | Clients retry on `503` and on network errors. Retries are safe, duplicates collapse. |
+| Ordering | Not guaranteed. Event time is stored and queries use event time. |
+| Duplicates | `events` collapses duplicates by key on merge. Marts may over-count by the duplicate rate until a rebuild. The rate is measured and published. |
+| Bad data | Rows that fail parsing or validation go to `events_rejected` with a reason. Nothing is dropped silently. |
+| Backpressure | If ClickHouse is unavailable, ingest returns `503`. There is no durable buffer, a client that stops retrying loses its events. |
+| Replay | Silver and gold are rebuilt from `raw` with a documented command. Source data can be replayed through the ingest API. |
 
----
+## 9. Failure modes
 
-## 9 Technology Stack
+| Failure | Effect | Handling |
+|---|---|---|
+| ClickHouse down | Ingest and read API return `503` | Clients retry with backoff. Readiness fails. |
+| Malformed event | Rejected with `400` at the API, or stored in `events_rejected` if it passes the API check | Reason is recorded. Reject ratio is shown in pipeline status. |
+| LLM provider down | No new findings, chat returns an error | The detector still scores and stores candidates. |
+| Budget exhausted | The run ends with a `budget_exhausted` result | The finding is marked incomplete and never hangs. |
+| Spend cap reached | Chat is refused until the next day | The UI shows a clear message. |
 
-| Concern      | Choice                                        |
-|--------------|-----------------------------------------------|
-| Language     | Java 21                                       |
-| Framework    | Spring Boot 4.x                               |
-| Build        | Gradle (convention plugins + version catalog) |
-| Code style   | Google Java Style Guide (Spotless)            |
-| Architecture | COLA (Alibaba) + Clean Architecture layers    |
-| API          | Spring WebMVC + Springdoc OpenAPI             |
-| Kafka        | Spring Kafka + Kafka Streams (in-process)     |
-| Cassandra    | Spring Data Cassandra                         |
-| PostgreSQL   | Spring Data JPA + Flyway                      |
-| Redis        | Spring Data Redis                             |
-| Metrics      | Micrometer + Prometheus                       |
-| Tracing      | Micrometer Tracing + OpenTelemetry            |
-| Export       | PostHog API + pluggable sink interface        |
-| Container    | Paketo Buildpacks / multi-stage Dockerfile    |
-| Native       | GraalVM CE (optional, `-Pnative`)             |
-| Quality      | Spotless + ArchUnit + JaCoCo                  |
+## 10. Security
 
----
+Summary here, details in [SECURITY.md](../SECURITY.md) and [AGENT.md](AGENT.md).
 
-## 10. API Endpoints
+- Ingest: bearer key. Chat: bearer token, rate limit, spend cap.
+- ClickHouse users: `ingest_writer` (insert on `raw` only), `api_reader` (Java reads), `agent_reader` (Python, read
+  only, limited), `findings_writer` (Python).
+- The browser never sends SQL.
+- Event content reaching the LLM is treated as data.
 
-| Method | Path                 | Purpose                                                             |
-|--------|----------------------|---------------------------------------------------------------------|
-| POST   | /api/v1/events       | Ingest a CloudEvents payload                                        |
-| GET    | /api/v1/events       | Query events (query params: type, source, since, until, limit)      |
-| GET    | /api/v1/metrics      | Query aggregated metrics (query params: type, metric, since, until) |
-| GET    | /actuator/health     | Health check                                                        |
-| GET    | /actuator/prometheus | Prometheus metrics                                                  |
+## 11. Performance targets
 
----
+No benchmarks have been run. The first goals are set before measurement and revised after it:
 
-## 11. Security
+| Goal | Target on the reference VPS (12 GB RAM, 2 CPU, arm64) |
+|---|---|
+| Event stored and queryable after the request, 100k event slice | p95 under 5 seconds |
+| Analytics endpoint query time | under 300 ms |
+| Agent finding after an injected anomaly | within one detection interval plus the agent run |
 
-- **API key authentication** on the ingestion endpoint. Keys hashed with Bcrypt.
-- **Rate limiting** per API key (sliding window via Redis Lua).
-- **TLS** in production. Self-signed for dev, cert-manager for K8s.
-- **Secrets** via Docker secrets or Kubernetes Secrets. Never in environment variables in production.
+Results and commands go to [benchmarks/](../benchmarks/README.md).
 
----
+## 12. Technology
 
-## 12. Performance Targets
+| Concern | Choice |
+|---|---|
+| Backend | Java 21, Spring Boot 4.1, Gradle with version catalog |
+| Warehouse | ClickHouse (version pinned, arm64 image required) |
+| Agent | Python 3.12, LiteLLM, `mcp-clickhouse`, gRPC |
+| Contract | CloudEvents 1.0 for events, protobuf for internal gRPC |
+| Quality | Spotless (google-java-format), ArchUnit, JUnit 5, Testcontainers, ruff, mypy, pytest |
+| Observability | Micrometer, Prometheus endpoint, structured JSON logs |
 
-*No benchmarks have been run. These are targets for the 1.0 release.*
+## 13. Deliberately not in scope (for now)
 
-| Metric                                | Target           |
-|---------------------------------------|------------------|
-| Ingestion throughput                  | 5,000 events/sec |
-| E2E latency (ingest to Cassandra) p95 | 500 ms           |
-| Query p50                             | 50 ms            |
-| Query p99                             | 200 ms           |
-| Memory (JVM)                          | 256-512 MB       |
-| Memory (native)                       | 64-128 MB        |
-| Startup (JVM)                         | 3-5 sec          |
-| Startup (native)                      | 50-100 ms        |
-
----
-
-## 13. Testing
-
-| Layer        | Tool                                                 | Scope                        |
-|--------------|------------------------------------------------------|------------------------------|
-| Unit         | JUnit 5                                              | Domain and application logic |
-| Integration  | Testcontainers (Kafka, Cassandra, PostgreSQL, Redis) | Full event lifecycle         |
-| Architecture | ArchUnit                                             | Package dependency rules     |
-| Load         | k6                                                   | Throughput and latency       |
-
-## 14. Observability
-
-Every request produces: structured JSON log (traceId, spanId), Micrometer metrics (counter, timer, histogram), and an OpenTelemetry span. Pre-built Grafana dashboard for pipeline health.
-
-## 15. Development
-
-```bash
-./gradlew build              # Full build + tests + checks
-./gradlew build -x test      # Fast build
-./gradlew test               # Run tests
-./gradlew check              # Spotless + ArchUnit
-./gradlew nativeCompile      # Native image (GraalVM)
-./gradlew bootBuildImage     # Docker image
-```
+A message broker, multi-shard clusters, Flink, Spark, Cassandra, PostgreSQL, Redis, Helm, a BI
+tool, chat channel integrations beyond the web UI, agent actions that change data, and per-event LLM calls. Reasons are in [DECISIONS.md](DECISIONS.md).
