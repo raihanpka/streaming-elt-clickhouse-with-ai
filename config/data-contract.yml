@@ -15,15 +15,22 @@
 
 version: 1
 
-# ClickHouse database that holds all Bromo tables. Change it to share a ClickHouse server.
-database: bromo
+# The three warehouse layers, each a ClickHouse database with its own tables.
+# Rename them to share a ClickHouse server, for example shop_bronze, shop_silver, shop_gold.
+#   bronze: table events                        exactly what was received
+#   silver: tables events and events_rejected   parsed, typed, validated
+#   gold:   one table per entry in goldTables   per minute rollups
+layers:
+  bronze: bronze
+  silver: silver
+  gold: gold
 
-# How long each layer keeps data, in days.
+# How long each table group keeps data, in days.
 retentionDays:
-  raw: 30
-  events: 90
-  rejected: 30
-  mart: 365
+  bronze: 30
+  silver: 90
+  silverRejected: 30
+  gold: 365
 
 # Rules for the CloudEvents envelope.
 event:
@@ -53,31 +60,37 @@ fields:
     nullable: false
     description: Category from data.label, for example fraud or ok, empty when absent
 
-# Per minute rollup that dashboards, the metrics API, and the detector read.
+# Tables of the gold layer, one per entry. Each table is named <name> and groups events per minute.
 #   dimensions: columns to group by. "type" and "source" are always included. Other entries must be
-#               string or low_cardinality_string fields from above.
+#               non-nullable string or low_cardinality_string fields from above.
 #   measures:   numeric fields to aggregate. Functions: sum, min, max, p95.
-mart:
-  dimensions: [label]
-  measures:
-    - field: amount
-      functions: [sum, p95]
+# Add another entry for a different grouping, for example one per customer.
+goldTables:
+  - name: events_1m
+    dimensions: [label]
+    measures:
+      - field: amount
+        functions: [sum, p95]
 
 # Metrics exposed by the API and described to the AI agent.
-#   expression: SQL over the mart table, evaluated per time bucket
+#   goldTable:  the entry in goldTables that holds the data
+#   expression: SQL over that gold table, evaluated per time bucket
 #   breakdowns: dimensions the metric can be split by
 metrics:
   - name: event_count
+    goldTable: events_1m
     unit: events
     description: Number of events
     expression: sum(events)
     breakdowns: [type, source, label]
   - name: amount_sum
+    goldTable: events_1m
     unit: currency
     description: Sum of amount over events that have an amount
     expression: sum(amount_sum)
     breakdowns: [type, source, label]
   - name: amount_p95
+    goldTable: events_1m
     unit: currency
     description: 95th percentile of amount
     expression: quantileMerge(0.95)(amount_p95_state)

@@ -24,11 +24,13 @@ class DataContractLoaderTest {
   @Test
   void defaultContractLoads() throws IOException {
     DataContract contract = DataContractLoader.parse(defaultYaml());
-    assertEquals("bromo", contract.database());
+    assertEquals("bronze", contract.layers().bronze());
+    assertEquals("silver.events", contract.silverTable());
+    assertEquals("gold.events_1m", contract.goldTable(contract.goldTables().get(0)));
     assertEquals(2, contract.fields().size());
     assertEquals(FieldType.FLOAT64, contract.fields().get(0).type());
     assertTrue(contract.fields().get(0).nullable());
-    assertEquals(List.of("label"), contract.mart().dimensions());
+    assertEquals(List.of("label"), contract.goldTables().get(0).dimensions());
     assertEquals(3, contract.metrics().size());
     assertEquals("com.example.payment.v1", contract.sample().type());
     assertEquals(42.5, contract.sample().data().get("amount"));
@@ -67,17 +69,17 @@ class DataContractLoaderTest {
   }
 
   @Test
-  void martDimensionMustBeAStringField() throws IOException {
+  void goldDimensionMustBeAStringField() throws IOException {
     assertTrue(
         problems(defaultYaml().replace("dimensions: [label]", "dimensions: [amount]"))
-            .contains("mart.dimensions"));
+            .contains("goldTables[0].dimensions"));
     assertTrue(
         problems(defaultYaml().replace("dimensions: [label]", "dimensions: [nope]"))
-            .contains("mart.dimensions"));
+            .contains("goldTables[0].dimensions"));
   }
 
   @Test
-  void martDimensionMustNotBeNullable() throws IOException {
+  void goldDimensionMustNotBeNullable() throws IOException {
     String yaml =
         defaultYaml()
             .replace(
@@ -87,10 +89,13 @@ class DataContractLoaderTest {
   }
 
   @Test
-  void martMeasureMustBeNumericWithKnownFunctions() throws IOException {
+  void goldMeasureMustBeNumericWithKnownFunctions() throws IOException {
     assertTrue(
-        problems(defaultYaml().replace("field: amount", "field: label")).contains("mart.measures"));
-    assertTrue(problems(defaultYaml().replace("[sum, p95]", "[median]")).contains("mart.measures"));
+        problems(defaultYaml().replace("field: amount", "field: label"))
+            .contains("goldTables[0].measures"));
+    assertTrue(
+        problems(defaultYaml().replace("[sum, p95]", "[median]"))
+            .contains("goldTables[0].measures"));
   }
 
   @Test
@@ -150,5 +155,38 @@ class DataContractLoaderTest {
                 .replace("type: float64", "type: decimal")
                 .replace("name: label", "name: attrs"));
     assertTrue(message.contains("fields[0].type") && message.contains("reserved"));
+  }
+
+  @Test
+  void layerNamesMustBeDifferent() throws IOException {
+    assertTrue(
+        problems(defaultYaml().replace("silver: silver", "silver: bronze"))
+            .contains("three different names"));
+  }
+
+  @Test
+  void layerNamesCanBePrefixed() throws IOException {
+    DataContract contract =
+        DataContractLoader.parse(defaultYaml().replace("bronze: bronze", "bronze: shop_bronze"));
+    assertEquals("shop_bronze.events", contract.bronzeTable());
+  }
+
+  @Test
+  void metricMustPointToAnExistingGoldTable() throws IOException {
+    assertTrue(
+        problems(
+                defaultYaml()
+                    .replace(
+                        "    goldTable: events_1m\n    unit: events",
+                        "    goldTable: nope\n    unit: events"))
+            .contains("metrics[0].goldTable"));
+  }
+
+  @Test
+  void severalGoldTablesAreSupportedAndNamesMustBeUnique() throws IOException {
+    String second = "  - name: events_5m\n    dimensions: []\n    measures: []\n";
+    String yaml = defaultYaml().replace("# Metrics exposed", second + "\n# Metrics exposed");
+    assertEquals(2, DataContractLoader.parse(yaml).goldTables().size());
+    assertTrue(problems(yaml.replace("events_5m", "events_1m")).contains("duplicate"));
   }
 }

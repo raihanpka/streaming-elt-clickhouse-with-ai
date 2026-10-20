@@ -3,7 +3,7 @@ package io.bromo.shared.contract;
 import io.bromo.shared.contract.DataContract.Binding;
 import io.bromo.shared.contract.DataContract.EventRules;
 import io.bromo.shared.contract.DataContract.FieldSpec;
-import io.bromo.shared.contract.DataContract.MartSpec;
+import io.bromo.shared.contract.DataContract.GoldTableSpec;
 import io.bromo.shared.contract.DataContract.Measure;
 import io.bromo.shared.contract.DataContract.MetricSpec;
 import io.bromo.shared.contract.DataContract.PlainJsonIntake;
@@ -76,33 +76,51 @@ public final class DataContractLoader {
     if (version != 1) {
       problems.add("version: only version 1 is supported");
     }
-    String database = text(top, "database", "database");
-    if (database == null || !NAME.matcher(database).matches()) {
-      problems.add("database: must match " + NAME.pattern());
-    }
+    DataContract.Layers layers = layers(child(top, "layers"));
     Retention retention = retention(child(top, "retentionDays"));
     EventRules event = eventRules(child(top, "event"));
     List<FieldSpec> fields = fields(list(top, "fields"));
-    MartSpec mart = mart(child(top, "mart"), fields);
-    List<String> allowedBreakdowns = new ArrayList<>(List.of("type", "source"));
-    allowedBreakdowns.addAll(mart.dimensions());
-    List<MetricSpec> metrics = metrics(list(top, "metrics"), allowedBreakdowns);
+    List<GoldTableSpec> goldTables = goldTables(list(top, "goldTables"), fields);
+    List<MetricSpec> metrics = metrics(list(top, "metrics"), goldTables);
     PlainJsonIntake plainJson = plainJson(child(child(top, "intake"), "plainJson"));
     Sample sample = sample(child(top, "sample"), event);
     if (!problems.isEmpty()) {
       throw new InvalidDataContractException(problems);
     }
     return new DataContract(
-        version, database, retention, event, fields, mart, metrics, plainJson, sample);
+        version, layers, retention, event, fields, goldTables, metrics, plainJson, sample);
+  }
+
+  /** Reads the three layer database names. */
+  private DataContract.Layers layers(Map<String, Object> map) {
+    String bronze = layerName(map, "bronze");
+    String silver = layerName(map, "silver");
+    String gold = layerName(map, "gold");
+    if (java.util.stream.Stream.of(bronze, silver, gold).distinct().count() != 3) {
+      problems.add("layers: bronze, silver, and gold must be three different names");
+    }
+    return new DataContract.Layers(bronze, silver, gold);
+  }
+
+  /** Reads one layer name with its default. */
+  private String layerName(Map<String, Object> map, String key) {
+    String value = optionalText(map, key);
+    if (value == null) {
+      return key;
+    }
+    if (!NAME.matcher(value).matches()) {
+      problems.add("layers." + key + ": must match " + NAME.pattern());
+    }
+    return value;
   }
 
   /** Reads the retention block. */
   private Retention retention(Map<String, Object> map) {
     return new Retention(
-        positive(map, "retentionDays.raw", "raw", 30),
-        positive(map, "retentionDays.events", "events", 90),
-        positive(map, "retentionDays.rejected", "rejected", 30),
-        positive(map, "retentionDays.mart", "mart", 365));
+        positive(map, "retentionDays.bronze", "bronze", 30),
+        positive(map, "retentionDays.silver", "silver", 90),
+        positive(map, "retentionDays.silverRejected", "silverRejected", 30),
+        positive(map, "retentionDays.gold", "gold", 365));
   }
 
   /** Reads the CloudEvents envelope rules. */
@@ -157,35 +175,60 @@ public final class DataContractLoader {
     return fields;
   }
 
-  /** Reads the mart and checks it against the fields. */
-  private MartSpec mart(Map<String, Object> map, List<FieldSpec> fields) {
+  /** Reads the gold tables and checks them against the fields. */
+  private List<GoldTableSpec> goldTables(List<Object> items, List<FieldSpec> fields) {
+    if (items.isEmpty()) {
+      problems.add("goldTables: define at least one gold table");
+    }
+    List<GoldTableSpec> tables = new ArrayList<>();
+    Set<String> names = new LinkedHashSet<>();
+    for (int i = 0; i < items.size(); i++) {
+      String where = "goldTables[" + i + "]";
+      Map<String, Object> item = asMap(items.get(i));
+      String name = text(item, where + ".name", "name");
+      if (name == null || !NAME.matcher(name).matches()) {
+        problems.add(where + ".name: must match " + NAME.pattern());
+      } else if (!names.add(name)) {
+        problems.add(where + ".name: duplicate name '" + name + "'");
+      }
+      tables.add(goldTable(name, item, where, fields));
+    }
+    return tables;
+  }
+
+  /** Reads one gold table. */
+  private GoldTableSpec goldTable(
+      String name, Map<String, Object> map, String where, List<FieldSpec> fields) {
     Map<String, FieldSpec> byName = new LinkedHashMap<>();
     fields.forEach(f -> byName.put(f.name(), f));
     List<String> dimensions = new ArrayList<>();
     for (Object value : list(map, "dimensions")) {
-      String name = String.valueOf(value);
-      FieldSpec field = byName.get(name);
-      if ("type".equals(name) || "source".equals(name)) {
+      String dimension = String.valueOf(value);
+      FieldSpec field = byName.get(dimension);
+      if ("type".equals(dimension) || "source".equals(dimension)) {
         continue;
       }
       if (field == null || field.type() == null || !field.type().textual()) {
         problems.add(
-            "mart.dimensions: '" + name + "' must be a string or low_cardinality_string field");
+            where
+                + ".dimensions: '"
+                + dimension
+                + "' must be a string or low_cardinality_string field");
       } else if (field.nullable()) {
-        problems.add("mart.dimensions: '" + name + "' must not be nullable");
-      } else if (!dimensions.contains(name)) {
-        dimensions.add(name);
+        problems.add(where + ".dimensions: '" + dimension + "' must not be nullable");
+      } else if (!dimensions.contains(dimension)) {
+        dimensions.add(dimension);
       }
     }
     List<Measure> measures = new ArrayList<>();
     List<Object> items = list(map, "measures");
     for (int i = 0; i < items.size(); i++) {
       Map<String, Object> item = asMap(items.get(i));
-      String field = text(item, "mart.measures[" + i + "].field", "field");
+      String field = text(item, where + ".measures[" + i + "].field", "field");
       FieldSpec spec = byName.get(field);
       if (spec == null || spec.type() == null || !spec.type().numeric()) {
         problems.add(
-            "mart.measures[" + i + "].field: '" + field + "' must be a float64 or int64 field");
+            where + ".measures[" + i + "].field: '" + field + "' must be a float64 or int64 field");
       }
       List<String> functions = new ArrayList<>();
       for (Object f : list(item, "functions")) {
@@ -193,18 +236,19 @@ public final class DataContractLoader {
       }
       if (functions.isEmpty() || !FUNCTIONS.containsAll(functions)) {
         problems.add(
-            "mart.measures["
+            where
+                + ".measures["
                 + i
                 + "].functions: use one or more of "
                 + new java.util.TreeSet<>(FUNCTIONS));
       }
       measures.add(new Measure(field, functions));
     }
-    return new MartSpec(dimensions, measures);
+    return new GoldTableSpec(name, dimensions, measures);
   }
 
   /** Reads the metric definitions. */
-  private List<MetricSpec> metrics(List<Object> items, List<String> allowedBreakdowns) {
+  private List<MetricSpec> metrics(List<Object> items, List<GoldTableSpec> goldTables) {
     List<MetricSpec> metrics = new ArrayList<>();
     Set<String> names = new LinkedHashSet<>();
     for (int i = 0; i < items.size(); i++) {
@@ -217,6 +261,16 @@ public final class DataContractLoader {
         problems.add(where + ".name: duplicate name '" + name + "'");
       }
       String expression = text(item, where + ".expression", "expression");
+      String tableName = text(item, where + ".goldTable", "goldTable");
+      GoldTableSpec table =
+          goldTables.stream().filter(m -> m.name().equals(tableName)).findFirst().orElse(null);
+      if (tableName != null && table == null) {
+        problems.add(where + ".goldTable: no gold table named '" + tableName + "'");
+      }
+      List<String> allowedBreakdowns = new ArrayList<>(List.of("type", "source"));
+      if (table != null) {
+        allowedBreakdowns.addAll(table.dimensions());
+      }
       List<String> breakdowns = new ArrayList<>();
       for (Object b : list(item, "breakdowns")) {
         breakdowns.add(String.valueOf(b));
@@ -229,6 +283,7 @@ public final class DataContractLoader {
       metrics.add(
           new MetricSpec(
               name,
+              tableName,
               unit == null ? "" : unit,
               description == null ? "" : description,
               expression,

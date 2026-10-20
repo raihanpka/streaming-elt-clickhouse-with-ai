@@ -9,17 +9,20 @@ import java.util.regex.Pattern;
  */
 public record DataContract(
     int version,
-    String database,
+    Layers layers,
     Retention retentionDays,
     EventRules event,
     List<FieldSpec> fields,
-    MartSpec mart,
+    List<GoldTableSpec> goldTables,
     List<MetricSpec> metrics,
     PlainJsonIntake plainJson,
     Sample sample) {
 
-  /** Days each warehouse layer keeps data. */
-  public record Retention(int raw, int events, int rejected, int mart) {}
+  /** Names of the three ClickHouse databases, one per layer. */
+  public record Layers(String bronze, String silver, String gold) {}
+
+  /** Days each table group keeps data. */
+  public record Retention(int bronze, int silver, int silverRejected, int gold) {}
 
   /** Rules for the CloudEvents envelope. */
   public record EventRules(
@@ -29,15 +32,20 @@ public record DataContract(
   public record FieldSpec(
       String name, String path, FieldType type, boolean nullable, String description) {}
 
-  /** Numeric aggregation of one field in the mart. */
+  /** Numeric aggregation of one field in a gold table. */
   public record Measure(String field, List<String> functions) {}
 
-  /** The per minute rollup: extra dimensions and measures. */
-  public record MartSpec(List<String> dimensions, List<Measure> measures) {}
+  /** One per minute table in the gold layer. */
+  public record GoldTableSpec(String name, List<String> dimensions, List<Measure> measures) {}
 
   /** A metric exposed by the API and described to the AI agent. */
   public record MetricSpec(
-      String name, String unit, String description, String expression, List<String> breakdowns) {}
+      String name,
+      String goldTable,
+      String unit,
+      String description,
+      String expression,
+      List<String> breakdowns) {}
 
   /** Where a plain JSON event attribute comes from: a JSON Pointer or a constant. */
   public record Binding(String pointer, String constant) {}
@@ -48,4 +56,24 @@ public record DataContract(
 
   /** A valid example event used by tests. */
   public record Sample(String type, String source, String subject, Map<String, Object> data) {}
+
+  /** The bronze table that the ingest API writes. */
+  public String bronzeTable() {
+    return layers.bronze() + ".events";
+  }
+
+  /** The silver table of validated events. */
+  public String silverTable() {
+    return layers.silver() + ".events";
+  }
+
+  /** The silver table of rejected rows. */
+  public String silverRejectedTable() {
+    return layers.silver() + ".events_rejected";
+  }
+
+  /** One gold table. */
+  public String goldTable(GoldTableSpec table) {
+    return layers.gold() + "." + table.name();
+  }
 }
