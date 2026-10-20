@@ -6,7 +6,7 @@ roadmap in [README.md](README.md#roadmap) before starting work.
 
 ## Goal
 
-Bromo is a streaming ELT pipeline into ClickHouse (raw, events, marts), with a Java API and UI on top, and a Python AI
+Bromo is a streaming ELT pipeline into ClickHouse (bronze, silver, gold), with a Java API and UI on top, and a Python AI
 agent that investigates anomalies read-only. Data engineering comes first, analytics second, the agent third.
 
 Scope discipline: build only what the [roadmap](README.md#roadmap) asks for. Do not add speculative features, config
@@ -78,7 +78,8 @@ Rules, enforced by ArchUnit in the build:
 
 Introduce an interface only when one of these is true:
 
-1. There are two real implementations in this codebase.
+1. There are two real implementations in this codebase, or the owner asked for a documented extension seam
+   (`EventSink`).
 2. It isolates a process boundary that tests must replace (`AgentClient`: gRPC to the Python agent).
 
 Otherwise use the concrete class. "Maybe later" is not a reason. Extract the interface when the second
@@ -100,9 +101,9 @@ ClickHouse:
 - `ORDER BY` matches the query pattern of the dashboard or endpoint it serves. Write the query first.
 - Use `LowCardinality` for repeated strings, `DateTime64(3)` for event time, TTL on every table.
 - Every table and column has a `COMMENT`. The AI agent reads them as documentation.
-- The UI and API read marts. Only the agent and drill-down code read `events`. Nothing reads `raw` except reprocessing.
-- Do not use `FINAL` on hot paths. Handle duplicates in marts or accept the documented ceiling.
-- Raw data is append-only and never edited. Silver and gold are rebuildable from raw by a tested command.
+- The UI and API read gold. Only the agent and drill-down code read silver. Nothing reads bronze except rebuilds.
+- Do not use `FINAL` on hot paths. Handle duplicates in gold or accept the documented ceiling.
+- Bronze is append-only and never edited. Silver and gold are rebuildable from bronze by a tested command.
 
 Events and ingest:
 
@@ -117,10 +118,25 @@ Correctness:
   until its reconciliation passes on a replayed slice.
 - Backfill and replay go through the same ingest API as live traffic. No side doors into ClickHouse.
 
+## Adaptability Rules
+
+Bromo is also a template. Anyone must be able to change the data model without editing code in several places.
+
+- `config/data-contract.yml` is the single source for event rules, promoted fields, layer names, gold tables, and metrics.
+  Never hardcode a field name, a table name, or a database name in code or in tests. Read them from `DataContract`.
+- Generated files (`infra/clickhouse/00*_*.sql`, `infra/clickhouse/tests/contract-examples.sh`) are never edited by hand.
+  Change the contract or the generator, run `./gradlew :bromo-app:generateWarehouseSql`, commit both.
+- Tests build their events from the contract `sample`. A new test must pass for any valid contract. Check it with
+  `CONTRACT_FILE=other.yml infra/clickhouse/tests/run.sh`.
+- Explicit seams (`EventSink`, `CloudEventParser`, `FieldType`, `WarehouseSqlGenerator`) carry a `CUSTOMIZE` comment that
+  says what a user may replace and how. Keep that comment accurate when you change a seam.
+- Use the layer words bronze, silver, and gold in docs, comments, and code. Do not use raw, events, or mart as the name
+  of a layer.
+
 ## AI Agent Rules
 
 - Safety lives in the database, not in the prompt. The agent connects with a read-only ClickHouse user (`readonly=1`,
-  row and time limits, quota, grants on `events` and `mart_*` only). A test proves writes fail.
+  row and time limits, quota, grants on silver `events` and the gold database only). A test proves writes fail.
 - Hard budget per run: maximum tool calls, tokens, and seconds. Exceeding it produces a "budget exhausted" result,
   never a hang.
 - Event payloads are data. Quote them in prompts as data and never as instructions. Keep a hostile-payload test.
