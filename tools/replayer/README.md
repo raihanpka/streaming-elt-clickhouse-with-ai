@@ -35,7 +35,8 @@ Copy `datasets/ulb-fraud.yml`, set the time column and unit, and map the columns
 
 ## Reconciliation
 
-After a run, compare the `sent` count with the silver table: `infra/clickhouse/reconcile.sh SOURCE EXPECTED`.
+After a run, compare the `sent` count with the distinct ids in silver: `infra/clickhouse/maintenance/run.sh count card-replay`.
+The full layer-to-layer checks are `infra/clickhouse/maintenance/run.sh reconcile`.
 
 ## Tests
 
