@@ -1,0 +1,33 @@
+[project]
+name = "bromo-replayer"
+version = "0.1.0"
+description = "Replays dataset slices through the Bromo ingest API as CloudEvents"
+requires-python = ">=3.12"
+dependencies = ["pyyaml>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+replay = "replayer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+ignore = ["D203", "D213", "D100", "D104"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
