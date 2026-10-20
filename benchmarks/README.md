@@ -17,7 +17,7 @@ the hardware, and the versions used.
 |---|---|---|
 | Resource baseline | Idle RAM and disk of the stack | M1 |
 | Ingest to queryable | p50 and p95 latency on a 100k-event slice | M1 |
-| Query time | Endpoint latency on gold marts, from `system.query_log` | M2 |
+| Query time | Endpoint latency on gold tables, from `system.query_log` | M2 |
 | Agent evaluation | Recall, precision, time to finding, explanation hit, cost per finding, per model | M4 |
 | Throughput and failures | Ingest ceiling on the reference machine, duplicate rate, recovery after restart | M4 |
 

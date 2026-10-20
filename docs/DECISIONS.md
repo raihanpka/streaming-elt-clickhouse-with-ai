@@ -7,22 +7,22 @@ A decision is changed by adding a new record, not by rewriting an old one.
 
 Status: accepted, 2026-10-20.
 
-**Context.** Bromo is a data engineering project: a streaming pipeline lands raw events in a warehouse, models them
+**Context.** Bromo is a data engineering project: a streaming pipeline lands events in a warehouse, models them
 there, and supports analytics and an AI agent on top. The datastore and transformation approach decide the footprint
 and the number of moving parts.
 
 **Decision.**
 
 1. ClickHouse is the only datastore. Cassandra, ScyllaDB, PostgreSQL, Redis, Kafka, and PostHog export are not used.
-2. Transformation is ELT inside ClickHouse with three layers: `raw`, `events`, `mart_*`.
+2. Transformation is ELT inside ClickHouse with three layers: bronze, silver, and gold, each its own database.
 3. There is no message broker in this version. The Java ingest API validates events and writes them straight to
-   `raw` with asynchronous inserts that are acknowledged after the flush.
+   the bronze table with asynchronous inserts that are acknowledged after the flush.
 4. Backfill and replay go through the same ingest API as live traffic.
 
 **Consequences.** Fewer moving parts and a footprint that fits a 12 GB, 2 CPU VPS. Duplicates are possible until merge,
-and marts can over-count by that rate, so the rate is measured and published. There is no transactional store, so auth
+and gold can over-count by that rate, so the rate is measured and published. There is no transactional store, so auth
 uses static keys until a second tenant exists. Without a broker there is no durable buffer: when ClickHouse is down
-ingest returns `503` and clients retry, and there is no topic replay (silver and gold are rebuilt from `raw`). If
+ingest returns `503` and clients retry, and there is no topic replay (silver and gold are rebuilt from bronze). If
 buffering or fan-out becomes necessary, a broker can be placed behind a single write seam in the `ingest` module.
 
 **Rejected.** Cassandra for events plus ClickHouse for analytics (two stores for one dataset). Flink (heavy, not needed
@@ -75,6 +75,44 @@ JSON uses `camelCase`, enums and database values use lowercase `snake_case`.
 
 **Consequences.** Clients and tools that already speak these standards work without special cases. The UI streams chat
 with `fetch` because the browser `EventSource` cannot send an `Authorization` header or use `POST`.
+
+## ADR 5: A data contract drives the validation, the SQL, and the tests
+
+Status: accepted, 2026-10-20.
+
+**Context.** The first version hardcoded the sample payment fields in the validator, the SQL, and the tests. Anyone with
+different events would have to rewrite code in several places.
+
+**Decision.** One file, `config/data-contract.yml`, describes the event rules, the promoted fields, the three layers,
+the gold tables, the metrics, and a sample event. A generator turns it into the ClickHouse init scripts. The validator
+reads it at startup. The tests build their events from its sample and run against any contract. Two seams are explicit
+extension points: `EventSink` for storage and `CloudEventParser` for input formats.
+
+**Consequences.** Adapting Bromo means editing one file and regenerating. A drift test fails when generated files are
+stale. The contract language is small on purpose (types, nullability, sum, min, max, p95), so exotic needs mean editing
+`FieldType` and `WarehouseSqlGenerator`. The contract is also checked against a second, very different contract
+(`CONTRACT_FILE=... infra/clickhouse/tests/run.sh`) to prove nothing else is hardcoded.
+
+**Rejected.** Hand edited SQL with markers (the user still changes SQL, validators, and tests). Creating tables from the
+application at startup (needs DDL rights, weakens the user and grant separation).
+
+## ADR 6: No dbt for the streaming layers
+
+Status: accepted, 2026-10-20.
+
+**Context.** dbt is the common tool for warehouse transformations, and the `dbt-clickhouse` adapter can manage
+materialized views.
+
+**Decision.** Bronze to silver to gold runs as ClickHouse materialized views that fire on every insert, generated from
+the data contract. dbt is not used for them. It stays an option for user written batch tables on top of silver, such as
+daily summaries.
+
+**Why.** dbt is batch oriented: it runs on a schedule, while these views must run per insert. Its explicit target table
+support for materialized views is documented as beta, and the default shape (a target table inferred from the query)
+does not give the control needed over engines, ordering keys, and TTL. A second source of truth next to the contract
+would also appear. dbt adds a Python toolchain and a scheduler for a handful of models.
+
+**Revisit when** users want many batch models, lineage documentation, or dbt tests over silver.
 
 ## Prior art and its limits
 

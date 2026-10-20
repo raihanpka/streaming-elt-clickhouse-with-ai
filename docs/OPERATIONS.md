@@ -66,7 +66,7 @@ shard by 2 replica example needs seven containers and is not required for any cl
   out of scope.
 - Pin versions in compose and in `gradle/libs.versions.toml`. Upgrade one component at a time and rerun the
   reconciliation tests and benchmarks.
-- Everything is rebuildable from `raw` and from the source data. A demo needs no backup. For real use, snapshot the
+- Everything is rebuildable from bronze and from the source data. A demo needs no backup. For real use, snapshot the
   ClickHouse volume and test a restore.
 
 ## Configuration
