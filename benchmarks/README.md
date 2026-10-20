@@ -42,6 +42,21 @@ docker stats --no-stream bromo-clickhouse
 docker system df
 ```
 
+### Ingest to queryable latency, single node (milestone M1)
+
+| Item | Value |
+|---|---|
+| Machine | Apple M3, 8 cores, 16 GB RAM, OrbStack Docker VM, ClickHouse `26.3.56.2` in a Testcontainers container |
+| Path | HTTP request to the ingest API, async insert that waits for the flush, materialized views, then a count query |
+| Single event, 200 requests | p50 69.4 ms, p95 74.0 ms, max 103.0 ms (request start until the row is queryable) |
+| Batch of 500 events, 10 batches | p50 72.3 ms, p95 93.5 ms |
+| Batch throughput, including the verification query | about 6,600 events per second |
+| Goal | p95 under 5 seconds, met by a wide margin |
+
+Command: `./gradlew :bromo-app:test --tests '*IngestLatencyTest*'`. The report is written to
+`bromo-app/build/reports/ingest-latency.txt`. These numbers come from one run on a laptop, not from the VPS, and are
+sequential single client measurements. Treat them as a baseline, not as a capacity claim.
+
 ## Layout
 
 ```
