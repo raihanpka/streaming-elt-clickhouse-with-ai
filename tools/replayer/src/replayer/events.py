@@ -6,6 +6,7 @@ from .mapping import DatasetMapping, FieldMapping
 from .source import Row
 
 TRUE_VALUES = {"1", "true", "yes", "y", "t"}
+NULL_VALUES = {"", "\\N"}
 
 
 def cast_value(raw: str, spec: FieldMapping) -> Any:
@@ -22,9 +23,13 @@ def cast_value(raw: str, spec: FieldMapping) -> Any:
 
 
 def build_event(mapping: DatasetMapping, row: Row, event_time: str) -> dict[str, Any]:
-    """Build one CloudEvent. The id depends only on the row, so a re-run sends the same ids."""
+    """Build one CloudEvent. Empty and null values are left out. The id depends only on the row."""
     context = {"row": row.number, **row.values}
-    data: dict[str, Any] = {key: cast_value(row.values[spec.column], spec) for key, spec in mapping.data.items()}
+    data: dict[str, Any] = {
+        key: cast_value(row.values[spec.column], spec)
+        for key, spec in mapping.data.items()
+        if row.values[spec.column] not in NULL_VALUES
+    }
     data["originalTime"] = row.values[mapping.time_column]
     event: dict[str, Any] = {
         "specversion": "1.0",
@@ -35,5 +40,7 @@ def build_event(mapping: DatasetMapping, row: Row, event_time: str) -> dict[str,
         "data": data,
     }
     if mapping.subject_template:
-        event["subject"] = mapping.subject_template.format_map(context)
+        subject = mapping.subject_template.format_map(context)
+        if subject not in NULL_VALUES:
+            event["subject"] = subject
     return event
