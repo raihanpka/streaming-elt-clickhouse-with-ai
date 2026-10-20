@@ -1,5 +1,6 @@
 """Dataset mapping files: how the columns of a dataset become CloudEvents."""
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 import yaml
 
 CASTS = {"string", "float", "int", "bool"}
+SOURCE_TYPES = {"csv", "clickhouse"}
+BUILTIN_PARAMS = {"since", "until", "limit"}
 TIME_UNITS = {"seconds", "epoch_seconds", "epoch_millis", "iso8601"}
 
 
@@ -36,6 +39,9 @@ class DatasetMapping:
     id_template: str
     subject_template: str | None
     data: dict[str, FieldMapping] = field(default_factory=dict)
+    source_type: str = "csv"
+    query: str | None = None
+    params: dict[str, str] = field(default_factory=dict)
 
 
 def load_mapping(path: Path) -> DatasetMapping:
@@ -76,6 +82,22 @@ def parse_mapping(raw: dict[str, Any]) -> DatasetMapping:
         data[key] = FieldMapping(column, cast, values)
     if not data:
         problems.append("event.data: map at least one key")
+    source = raw.get("source") or {}
+    source_type = str(source.get("type", "csv"))
+    query = source.get("query")
+    params = {str(k): str(v) for k, v in (source.get("params") or {}).items()}
+    if source_type not in SOURCE_TYPES:
+        problems.append(f"source.type: use one of {sorted(SOURCE_TYPES)}")
+    if source_type == "clickhouse":
+        if not query or not str(query).strip():
+            problems.append("source.query: required for a clickhouse source")
+        else:
+            query = " ".join(str(query).split())
+            unknown = set(re.findall(r"\{(\w+)\}", query)) - set(params) - BUILTIN_PARAMS
+            if unknown:
+                problems.append(f"source.query: placeholders {sorted(unknown)} are not listed under source.params")
+            if re.search(r"\bFORMAT\b", query, re.IGNORECASE):
+                problems.append("source.query: leave FORMAT out, the replayer adds CSVWithNames")
     if problems:
         raise MappingError("Invalid dataset mapping:\n  * " + "\n  * ".join(problems))
     return DatasetMapping(
@@ -88,4 +110,7 @@ def parse_mapping(raw: dict[str, Any]) -> DatasetMapping:
         id_template=id_template,
         subject_template=subject,
         data=data,
+        source_type=source_type,
+        query=str(query) if query else None,
+        params=params,
     )

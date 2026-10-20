@@ -6,8 +6,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class FakeIngest:
     """A tiny HTTP server that records requests and can fail the first calls."""
 
-    def __init__(self, fail_first: int = 0, fail_status: int = 503, always_status: int | None = None):
+    def __init__(self, fail_first: int = 0, fail_status: int = 503, always_status: int | None = None, on_request=None):
         self.requests: list[dict] = []
+        self.on_request = on_request
         self.fail_first = fail_first
         self.fail_status = fail_status
         self.always_status = always_status
@@ -24,6 +25,8 @@ class FakeIngest:
                         "body": body,
                     }
                 )
+                if outer.on_request:
+                    outer.on_request()
                 status = outer.always_status
                 if status is None and len(outer.requests) <= outer.fail_first:
                     status = outer.fail_status

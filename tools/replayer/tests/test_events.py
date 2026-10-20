@@ -38,3 +38,26 @@ def test_event_ids_are_stable_across_runs():
     a = build_event(MAPPING, first_row(), "2026-10-20T10:00:00.000Z")["id"]
     b = build_event(MAPPING, first_row(), "2026-10-20T11:00:00.000Z")["id"]
     assert a == b
+
+
+def row_with(**overrides):
+    from replayer.source import Row
+
+    values = {"Time": "5", "V1": "", "Amount": "10.5", "Class": "0"}
+    values.update(overrides)
+    return Row(7, 5.0, values)
+
+
+def test_empty_and_null_values_are_left_out_of_data():
+    event = build_event(MAPPING, row_with(Amount="", Class="\\N"), "2026-10-20T10:00:00.000Z")
+    assert "amount" not in event["data"]
+    assert "label" not in event["data"]
+    assert event["data"]["originalTime"] == "5"
+
+
+def test_empty_subject_is_left_out():
+    from dataclasses import replace
+
+    mapping = replace(MAPPING, subject_template="{V1}")
+    assert "subject" not in build_event(mapping, row_with(V1=""), "2026-10-20T10:00:00.000Z")
+    assert build_event(mapping, row_with(V1="tail-1"), "2026-10-20T10:00:00.000Z")["subject"] == "tail-1"

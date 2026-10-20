@@ -30,7 +30,8 @@ services:
     mem_limit: 2g
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      - ../clickhouse:/docker-entrypoint-initdb.d:ro
+      # Generated from config/data-contract.yml. Set CLICKHOUSE_INIT_DIR to try another contract, see docs/DATA.md.
+      - ${CLICKHOUSE_INIT_DIR:-../clickhouse}:/docker-entrypoint-initdb.d:ro
     networks:
       - bromo-net
 

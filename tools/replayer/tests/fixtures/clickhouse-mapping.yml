@@ -1,0 +1,24 @@
+name: query-dataset
+source:
+  type: clickhouse
+  query: >
+    SELECT toUnixTimestamp(t) AS event_time, a, b
+    FROM some_table
+    WHERE d >= toDate('{since}') AND d <= toDate('{until}') AND y = {year}
+    ORDER BY event_time
+    LIMIT {limit}
+  params:
+    since: "2020-01-01"
+    until: "2020-12-31"
+    year: "2020"
+    limit: "1000"
+time:
+  column: event_time
+  unit: epoch_seconds
+event:
+  type: com.example.thing.v1
+  source: query-replay
+  id: "q-{row}"
+  data:
+    a: { column: a, cast: int }
+    b: { column: b }

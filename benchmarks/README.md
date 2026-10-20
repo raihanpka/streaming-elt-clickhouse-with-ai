@@ -81,6 +81,25 @@ infra/clickhouse/maintenance/run.sh reconcile
 infra/clickhouse/maintenance/run.sh reprocess
 ```
 
+### Replay of 1M real flights (OnTime)
+
+| Item | Value |
+|---|---|
+| Machine | Apple M3, 8 cores, 16 GB RAM, OrbStack Docker VM, ClickHouse `26.3.56.2` with a 2 GiB limit, app started with `./gradlew :bromo-app:bootRun` |
+| Data | The first 1,000,000 flights of 2022-01-01 to 2022-03-31 from the public OnTime copy, read by the replayer through a ClickHouse query that reads `s3()` |
+| Replay | 1,000,000 events in batches of 500, `--speed 50000`, 293 s wall time including the S3 read and the sort, about 3,400 events per second end to end. The replayer is single threaded Python. |
+| Reconciliation | bronze valid versus silver 1,000,000 to 1,000,000, rejected 0, silver versus both gold tables 1,000,000 each, all consistent |
+| Size on disk | bronze 60 MiB, silver 34 MiB, gold 1 to 2 MiB per table (active parts, before background merges finish) |
+| ClickHouse memory after the load | about 1.4 GiB of the 2 GiB limit, a single run. Leave headroom on a small VPS. |
+
+Totals of the slice: 54,784 cancelled flights (35,095 for weather, 17,890 for the airline, 917 for the air system, 882 for
+security), 5.44 million carrier delay minutes, 4.24 million late aircraft minutes, 1.98 million air system minutes, 0.80
+million weather minutes.
+
+Commands: see [docs/DATA.md](../docs/DATA.md#primary-dataset-ontime-flights) with `--speed 50000`. At that speed the
+whole quarter fits in about three replay minutes, so the gold tables are coarse. Use `--speed 1440` for day by day
+buckets.
+
 ## Layout
 
 ```
