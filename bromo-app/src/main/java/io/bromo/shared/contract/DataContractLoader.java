@@ -171,6 +171,8 @@ public final class DataContractLoader {
       if (field == null || field.type() == null || !field.type().textual()) {
         problems.add(
             "mart.dimensions: '" + name + "' must be a string or low_cardinality_string field");
+      } else if (field.nullable()) {
+        problems.add("mart.dimensions: '" + name + "' must not be nullable");
       } else if (!dimensions.contains(name)) {
         dimensions.add(name);
       }

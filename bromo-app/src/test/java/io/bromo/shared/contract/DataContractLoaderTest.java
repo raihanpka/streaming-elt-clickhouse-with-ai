@@ -77,6 +77,16 @@ class DataContractLoaderTest {
   }
 
   @Test
+  void martDimensionMustNotBeNullable() throws IOException {
+    String yaml =
+        defaultYaml()
+            .replace(
+                "type: low_cardinality_string\n    nullable: false",
+                "type: low_cardinality_string\n    nullable: true");
+    assertTrue(problems(yaml).contains("must not be nullable"));
+  }
+
+  @Test
   void martMeasureMustBeNumericWithKnownFunctions() throws IOException {
     assertTrue(
         problems(defaultYaml().replace("field: amount", "field: label")).contains("mart.measures"));
