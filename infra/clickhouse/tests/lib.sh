@@ -26,3 +26,6 @@ summary() {
   echo "passed=$PASS failed=$FAIL"
   [ "$FAIL" -eq 0 ]
 }
+
+# Runs a SQL file as the admin user with several statements.
+qfile() { docker exec -i "$NAME" clickhouse-client --user admin --password "$ADMIN_PW" --multiquery < "$1"; }
